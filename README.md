@@ -244,3 +244,60 @@ Each `results/run-<utc-time>-<random-id>/` directory contains:
 Records are appended and flushed during execution, but a process forcibly terminated before final completion may have no final `run_summary.json`; incomplete runs must never be described as completed. Geometry rejected during the mutation's internal 85-attempt search is currently aggregated into a rejected birth attempt, not a separately recorded intermediate placement; individual-level rejection tracking is implemented, but **every internal candidate position is not yet recorded**. The mutation detail records which square indices changed, but not each failed intermediate position.
 
 The telemetry and PNG code is committed; **CI/actual full 100-generation execution must be verified before claiming measured performance or completion**.
+
+
+## Adaptive mutation (optional; implemented)
+
+Run the normal grid-seeded five-square solver with adaptive child proposals:
+
+```bash
+python -m pip install Pillow
+python -m unittest discover -s tests -v
+python -m gerit --config configs/five-squares.json --adaptive --runs-dir results --image-columns 5
+```
+
+`--adaptive` enables `gerit/adaptive.py`, which chooses Gaussian displacement
+and rotation scales from **both** parent density `n / L^2` and the empirical
+fraction of *valid whole-child proposals* in a rolling window of 120 attempts.
+As children fail, the scale contracts but cannot fall below a configurable
+minimum. About 10% of child proposals retain a macro/global exploration
+component, to reduce complete loss of exploration. The rest use smaller local
+proposals. Parameters are represented by `AdaptiveSettings`.
+All accepted offspring pass the existing exact-zero-tolerance floating-point
+SAT checker. A separate independent geometry checker remains recommended.
+
+**Selection is unchanged:** 75% fitness, 25% structural diversity by default;
+parent + offspring compete. The adaptive method changes mutation only.
+Recorded runs include `adaptive_enabled` and adaptive controller diagnostics.
+This is a heuristic, not an optimizer with guaranteed convergence.
+
+### Audited experimental result: restarting from round 5
+
+The independently archived 20 selected layouts from the previous 100-round run
+(`Gerit_round5_100_more_generations.zip`) were used as the exact **starting
+population** for an experimental restart with `seed=20261028`. The starting
+population has best side `2.782832031707441`. This was a seeded restart,
+**not a bit-for-bit continuation of old RNG state**.
+
+A standalone reproducible experiment runner and the input lineage are included
+in the downloadable experiment ZIP; the usual `--adaptive` CLI without
+population input starts from a new grid population.
+
+- Adaptive: **100** rounds, 10,000 child proposals, **558** feasible child
+  proposals, best side `2.7792259910275634`.
+- Original-mutation comparison (same 20 starting layouts, seed, number of
+  generations, offspring per parent and same selection): **301** feasible
+  child proposals, best side `2.782832031707441`.
+- Validity of the adaptive run was checked against **all 558 valid offspring
+  and every selected survivor** using the numerical SAT checker. The final
+  packing was independently checked with Shapely/GEOS: no polygon intersection
+  area detected.
+- Timing and outcomes are **specific to one run each**, not statistical proof
+  that the adaptive method is superior on average. Controlled multi-seed
+  repeats remain essential.
+
+Each restart run produced 101 population mosaics (generation zero plus 100
+rounds) and append-only JSONL genealogy/selection logs. Distinguish valid
+offspring count from record improvements: the record improved in **round 44**
+but not afterwards. Code and full run data are distributed with the experiment
+artifact, not assumed to be stored as a GitHub Actions result.
