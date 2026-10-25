@@ -1,0 +1,23 @@
+{
+  "schema_version": "gerit-run-config-0.1",
+  "n_squares": 5,
+  "initial_population": 20,
+  "next_generation_population": 20,
+  "offspring_per_parent": 5,
+  "selection_groups": [
+    {
+      "method": "fitness",
+      "share": 0.75
+    },
+    {
+      "method": "diversity",
+      "share": 0.25
+    }
+  ],
+  "initialization_source": "grid_mutations",
+  "initial_container_side": 3,
+  "diversity_metric": "center_distances_angles",
+  "seed": 17,
+  "max_generations": 100,
+  "max_evaluations": 100000
+}
