@@ -1,0 +1,59 @@
+name: Gerit 100-generation experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: Path to the experiment config in the repository
+        required: false
+        type: string
+        default: configs/five-squares.json
+      image_columns:
+        description: Number of columns in each generation PNG
+        required: false
+        type: number
+        default: 5
+  push:
+    paths:
+      - .github/workflows/experiment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  run-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout experiment implementation
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PNG renderer
+        run: python -m pip install Pillow
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Execute recorded evolutionary experiment
+        env:
+          CONFIG_PATH: ${{ inputs.config_path || 'configs/five-squares.json' }}
+          IMAGE_COLUMNS: ${{ inputs.image_columns || 5 }}
+        run: |
+          python -m gerit --config "$CONFIG_PATH" --runs-dir results \
+            --image-columns "$IMAGE_COLUMNS" --output results/latest.json
+      - name: Verify audit evidence and image count
+        run: |
+          RUN_DIR=$(find results -mindepth 1 -maxdepth 1 -type d -name 'run-*' | sort | tail -n 1)
+          test -n "$RUN_DIR"
+          python scripts/verify_run.py "$RUN_DIR"
+      - name: Preserve logs and every generation PNG
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-experiment-${{ github.run_number }}
+          path: |
+            results/run-*/
+            results/latest.json
+          if-no-files-found: warn
+          retention-days: 30
