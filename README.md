@@ -222,3 +222,25 @@ The current evolutionary baseline:
 ### Development notes
 
 The initial strategy uses `grid_mutations` and `random_valid` initialization modes. The latter means independently mutated, strictly valid configurations from the grid control — **not** mathematically uniform sampling from all feasible packings. Repeated identical individuals may be present if the budget is exhausted or valid distinct candidates cannot be generated. The selection shares use the versioned configuration already documented above.
+
+
+## Auditable lineage and population images
+
+Every **real CLI run** now creates an independent run directory under `--runs-dir` (default `results/`). Install the plotting dependency once: `python -m pip install Pillow`.
+
+```bash
+python -m gerit --config configs/five-squares.json --runs-dir results --image-columns 5
+```
+
+Each `results/run-<utc-time>-<random-id>/` directory contains:
+- `config.json`: precise run parameters.
+- `individuals.jsonl`: one record per proposed individual, including unique identifier, birth generation, parent identifier, validated candidate geometry where accepted, mutation index list, and reasons for rejected proposals.
+- `selection.jsonl`: selected vs discarded candidate IDs at every completed selection round.
+- `generations.jsonl`: sequential generation indices, selected IDs (survivors, including duplicates when present), per-generation child counts, evaluations, elapsed seconds, and best-so-far.
+- `generation_images/gen_000.png`, `gen_001.png`, ...: one mosaic per recorded population, including **generation zero**. By design, 100 completed evolution rounds produce **101 PNGs** (the initial generation plus 100 subsequent generations), not 100.
+- `run_summary.json`: UTC start/end, wall-clock elapsed seconds measured by `perf_counter`, exact completed generation count, attempted evaluations, accepted/rejected offspring, validated best side, stop reason, PNG count.
+- `best_result.json`: best geometric solution and history.
+
+Records are appended and flushed during execution, but a process forcibly terminated before final completion may have no final `run_summary.json`; incomplete runs must never be described as completed. Geometry rejected during the mutation's internal 85-attempt search is currently aggregated into a rejected birth attempt, not a separately recorded intermediate placement; individual-level rejection tracking is implemented, but **every internal candidate position is not yet recorded**. The mutation detail records which square indices changed, but not each failed intermediate position.
+
+The telemetry and PNG code is committed; **CI/actual full 100-generation execution must be verified before claiming measured performance or completion**.
