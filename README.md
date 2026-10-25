@@ -2,7 +2,7 @@
 
 **Gerit** is a Python-first research project for evolutionary optimization of the **Squares in Squares** packing problem.
 
-> **Status: Phase 0 — research specification and roadmap.** No optimization results are claimed yet. The initial baseline, solver and independent geometric validator are planned, not implemented.
+> **Status: Phase 1 — initial rigid-square geometry implemented.** A dependency-free geometry validator, grid baselines and unit tests are committed. The evolutionary solver and second, independent validation backend have **not** been implemented. No optimization results are claimed.
 
 ## هدف پروژه (خلاصه فارسی)
 
@@ -84,7 +84,7 @@ This layout is a **proposal**, not a claim that these files already exist. Initi
 ## Milestones
 
 - **M0 — Specification (current):** document goal, constraints, baselines, acceptance criteria and architecture.
-- **M1 — Geometry & verification:** implement square geometry, collision and boundary validators; add adversarial tests and known-valid baselines.
+- **M1 — Geometry & verification (initial implementation complete):** unit-square geometry, SAT collision detection, container boundaries, bounding-square metrics, tests and valid grid baselines. Additional independent high-precision validation remains future work.
 - **M2 — Non-evolutionary control:** deterministic random-restart/local-search benchmark for n=11 and n=17.
 - **M3 — Evolutionary prototype:** population, mutation, selection, elitism, diversity and generation histories.
 - **M4 — Comparative experiments:** matched-seed, matched-budget evaluation against M2; independently validate archived best candidates.
@@ -153,3 +153,40 @@ Example configuration:
 - Seed, generation/evaluation budgets and the diversity metric are explicit to support fair tests. More computational controls (workers, CPU/GPU backend, wall-time) may be added as versioned fields when execution backends exist.
 
 **Research design:** compare grid-only, randomized valid initial populations, and later optional agent/human-proposed seed populations under the same evaluation budget. Do not assume agents produce higher-quality initial placements without measured evidence.
+
+
+## Phase 1 — geometry (implemented)
+
+The initial numerical geometry core is dependency-free (Python 3.12+).
+
+- `gerit/geometry.py`: immutable `Square(x, y, angle)` (angle **in radians**, side length always 1), `Packing`, `ValidationResult`.
+- `square_vertices(square)`: rotated unit-square vertices.
+- `squares_overlap(a,b,tolerance=1e-10)`: separating-axis test (SAT) for interior overlap; boundary contact is allowed.
+- `square_inside_container(square, side)`: corners constrained to `[0,side]^2`.
+- `validate_packing(packing)`: indices of overlapping pairs and out-of-bounds squares.
+- `minimum_bounding_square(squares)`: rebase a **fixed** arrangement into a tight axis-aligned square envelope; this does not optimize/rearrange or repair collisions.
+- `unused_area(packing)`: `L²-n` for valid packings; rejects invalid geometry.
+- `grid_baseline(n)`: exact row-major grid initial condition (n=5 → 3×3, n=17 → 5×5).
+- `tests/test_geometry.py`: numerical geometry regression tests.
+
+Quick check:
+
+```bash
+python -m unittest discover -s tests -v
+python - <<'PY'
+from gerit.geometry import grid_baseline, validate_packing, unused_area
+packing = grid_baseline(5)
+print(packing.container_side, validate_packing(packing).valid, unused_area(packing))
+# 3.0 True 4.0
+PY
+```
+
+### Numerical precision boundary
+
+The default SAT tolerance is `1e-10`. Penetrations no larger than this tolerance **may be classified as contact**; likewise, boundary overruns up to tolerance may be accepted. This is an explicit approximate numerical policy, **not an exact proof of feasibility**. Before claiming a record or submitting to a competition, revalidate with a separate higher-precision or certified geometry implementation and an appropriate safety margin. The proposed independent `Shapely`/GEOS-based checker is a future milestone and is not claimed implemented.
+
+The core validates snapshots of rigid squares, not their swept collision-free physical motion. Any evolution or visualization must distinguish accepted destination states from actual trajectories.
+
+### Implementation status
+
+Phase 1 geometry was exercised against eight local checks before GitHub upload (valid grids, rotated unit edges, legal contact, overlap, out-of-bounds, tight bounding square, unrepaired overlaps and invalid inputs). CI in the repository has not yet independently confirmed them. The evolutionary engine is still pending.
