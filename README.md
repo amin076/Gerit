@@ -301,3 +301,56 @@ rounds) and append-only JSONL genealogy/selection logs. Distinguish valid
 offspring count from record improvements: the record improved in **round 44**
 but not afterwards. Code and full run data are distributed with the experiment
 artifact, not assumed to be stored as a GitHub Actions result.
+
+
+## Round 8: local compression after coordinated mutation
+
+An optional local compression stage is now available in the reusable evolutionary
+motor, alongside an optional simultaneous coordinated mutation operator:
+
+```bash
+python -m pip install Pillow
+python -m unittest discover -s tests -v
+python -m gerit --config configs/five-squares.json --coordinated --compression
+```
+
+`gerit/coordinated.py` implements coupled translation/rotation/contraction
+of several squares, evaluating full final layouts. `gerit/local_compression.py`
+implements a local search **after a valid child**: up to 35 trial steps,
+including rigid center-coordinate contraction, coordinated subset movement, and
+boundary-square displacement/rotation. Each accepted step must preserve strict
+numerical SAT validity and never increase the enclosing square side; for ties,
+the sum of width and height must decrease. Tiny floating-point re-normalization
+issues fall back to the original valid child. No physically collision-free
+intermediate trajectory is implied.
+
+The CLI options `--coordinated --compression` select this new pair of
+operators. The default remains the older solver. The CLI still starts from
+its configured grid baseline; **the completed round-8 benchmark below** starts
+from an archived previous-run population via its standalone script included in
+the experimental artifact. This distinction matters for reproducibility.
+
+### Experimental 100-round restart
+
+- Input: 20 surviving layouts in the final selected population of round 7;
+  starting best `L=2.7792259910275634`.
+- 18 fitness survivors + 2 structural diversity survivors per generation;
+  5 child proposals per parent, random seed `20261030`.
+- 100 completed new evolutionary rounds; 101 population mosaics, including
+  initial population.
+- 10,000 offspring proposals: 806 valid and 9,194 rejected.
+- For the valid children, **28,210 additional local compaction trials**
+  were performed, producing 5,062 accepted local steps; 769 children experienced
+  a strictly smaller enclosing side after compression.
+- Best `L=2.756245908757252` discovered in generation **17**, maintained
+  through generation 100; wall time `79.521464765` seconds on the experimental
+  container. This is numerical feasibility, **not a global optimality proof**.
+- A separate Shapely polygon check of the final solution found zero pairwise
+  overlap area. Append-only lineage logs, selection logs, source snapshot,
+  generation images, the source runner and an independent verification
+  report are included in the downloadable round-8 archive.
+
+**Scientific caveat:** the round-8 run used an additional 28,210 local candidate
+evaluations and a different fresh random seed. Comparing its best side to the
+earlier no-compression run does *not* by itself isolate the causal benefit of
+compression. A matched-budget, multi-seed controlled benchmark should follow.
