@@ -122,7 +122,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -131,22 +131,41 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     import time
     from .records import RunRecorder, utc_now
     from .adaptive import AdaptiveController, mutate_adaptive
+    from .coordinated import CoordinatedController, mutate_coordinated
+    from .local_compression import CompressionSettings, compress_valid
     started_at=utc_now()
     clock=time.perf_counter()
     if cfg.initialization_source not in {"grid_mutations","random_valid"}:
         raise NotImplementedError("file/agent initialization adapters are not implemented")
     if cfg.diversity_metric!="center_distances_angles":
         raise ValueError("Unsupported diversity metric")
+    if compression and not coordinated:
+        raise ValueError("compression=True requires coordinated=True")
+    if adaptive and coordinated:
+        raise ValueError("adaptive and coordinated are alternative mutators")
     rng=random.Random(cfg.seed)
     adaptive_controller=AdaptiveController() if adaptive else None
+    coordinated_controller=CoordinatedController() if coordinated else None
+    compression_settings=CompressionSettings()
+    compression_trials=0
+    compression_moves=0
     def make_child(parent: Packing):
+        nonlocal compression_trials,compression_moves
+        if coordinated_controller is not None:
+            child,meta=mutate_coordinated(parent,rng,cfg.initial_container_side,coordinated_controller)
+            if compression and child is not None:
+                child,compressed_meta=compress_valid(child,rng,compression_settings,cfg.initial_container_side)
+                compression_trials+=compressed_meta["compression_trials"]
+                compression_moves+=compressed_meta["compression_accepted"]
+                meta["local_compression"]=compressed_meta
+            return child,meta
         if adaptive_controller is not None:
             return mutate_adaptive(parent,rng,cfg.initial_container_side,adaptive_controller)
         return mutate(parent,rng,cfg.initial_container_side),None
     base=grid_baseline(cfg.n_squares)
     if cfg.initial_container_side+1e-12<base.container_side:
         raise ValueError("Initial container is smaller than grid baseline")
-    recorder=RunRecorder(output_dir,{**asdict(cfg),"adaptive_enabled":adaptive},image_columns) if output_dir else None
+    recorder=RunRecorder(output_dir,{**asdict(cfg),"adaptive_enabled":adaptive,"coordinated_enabled":coordinated,"compression_enabled":compression},image_columns) if output_dir else None
     ids=iter(range(1,2**63))
     parents: list[tuple[int,Packing]]=[]
     evaluations=0
@@ -182,7 +201,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         parent_id,parent=rng.choice(parents) if cfg.initialization_source=="grid_mutations" else parents[0]
         child, mutation_meta=make_child(parent)
         item=propose(child,0,parent_id,"initial_mutation",
-                     (mutation_meta if adaptive else ({"changed_indices": [i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
+                     (mutation_meta if (adaptive or coordinated) else ({"changed_indices": [i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
         if item: parents.append(item)
     # Duplicated survival slots are deliberate but not new individuals.
     while len(parents)<cfg.initial_population:
@@ -214,7 +233,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 if evaluations>=cfg.max_evaluations: break
                 child, mutation_meta=make_child(parent)
                 item=propose(child,gen,parent_id,"offspring",
-                             (mutation_meta if adaptive else ({"changed_indices":[i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
+                             (mutation_meta if (adaptive or coordinated) else ({"changed_indices":[i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
                 if item: proposals.append(item)
             if evaluations>=cfg.max_evaluations: break
         pool=old_parents+proposals
@@ -252,7 +271,12 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "best_side":best.container_side,"best_individual_id":best_id,
             "best_validation":asdict(validate_packing(best,tolerance=0.0)),
             "adaptive_enabled":adaptive,
-            "adaptive_controller":adaptive_controller.snapshot() if adaptive_controller is not None else None
+            "adaptive_controller":adaptive_controller.snapshot() if adaptive_controller is not None else None,
+            "coordinated_enabled":coordinated,
+            "coordinated_controller":coordinated_controller.snapshot() if coordinated_controller is not None else None,
+            "compression_enabled":compression,
+            "compression_trials":compression_trials,
+            "compression_accepted_moves":compression_moves
         })
         result.save(recorder.directory/"best_result.json")
     return result
