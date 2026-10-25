@@ -23,5 +23,17 @@ class TestLocalCompression(unittest.TestCase):
         self.assertEqual(p,q)
         self.assertEqual(m,n)
 
+    def test_integrated_coordinated_compression(self):
+        from gerit.config import RunConfig, SelectionGroup
+        from gerit.evolution import evolve
+        config=RunConfig(initial_population=3,next_generation_population=4,
+            offspring_per_parent=1,max_generations=2,max_evaluations=20,
+            selection_groups=(SelectionGroup("fitness",.75),
+                              SelectionGroup("diversity",.25)),
+            seed=51)
+        result=evolve(config,coordinated=True,compression=True)
+        self.assertEqual(len(result.history),3)
+        self.assertTrue(validate_packing(result.best,tolerance=0.0).valid)
+
 if __name__=="__main__":
     unittest.main()
