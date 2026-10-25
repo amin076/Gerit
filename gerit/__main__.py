@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--output",default="results/five-squares-latest.json",help="Best-result JSON output")
     parser.add_argument("--runs-dir",default="results",help="Root for auditable run directories")
     parser.add_argument("--image-columns",type=int,default=5,help="Population mosaic columns")
+    parser.add_argument("--adaptive",action="store_true",help="Enable density- and acceptance-adaptive mutation")
     args=parser.parse_args()
     config=load_config(args.config)
     if args.dry_run:
@@ -22,7 +23,7 @@ def main() -> None:
                           "later_generation_child_proposals":config.next_generation_population*config.offspring_per_parent},
                          ensure_ascii=False,indent=2))
         return
-    result=evolve(config,output_dir=args.runs_dir,image_columns=args.image_columns)
+    result=evolve(config,output_dir=args.runs_dir,image_columns=args.image_columns,adaptive=args.adaptive)
     result.save(args.output)
     print(json.dumps({"status":"completed","best_side":result.best.container_side,
                       "unused_area":result.best.container_side**2-config.n_squares,
