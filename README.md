@@ -2,7 +2,7 @@
 
 **Gerit** is a Python-first research project for evolutionary optimization of the **Squares in Squares** packing problem.
 
-> **Status: Phase 1 — initial rigid-square geometry implemented.** A dependency-free geometry validator, grid baselines and unit tests are committed. The evolutionary solver and second, independent validation backend have **not** been implemented. No optimization results are claimed.
+> **Status: Phase 1 — initial rigid-square geometry implemented.** A dependency-free geometry validator, grid baselines and unit tests are committed. A first seeded evolutionary solver is now implemented. A second independent validation backend has **not** been implemented. No optimization results are claimed.
 
 ## هدف پروژه (خلاصه فارسی)
 
@@ -86,7 +86,7 @@ This layout is a **proposal**, not a claim that these files already exist. Initi
 - **M0 — Specification (current):** document goal, constraints, baselines, acceptance criteria and architecture.
 - **M1 — Geometry & verification (initial implementation complete):** unit-square geometry, SAT collision detection, container boundaries, bounding-square metrics, tests and valid grid baselines. Additional independent high-precision validation remains future work.
 - **M2 — Non-evolutionary control:** deterministic random-restart/local-search benchmark for n=11 and n=17.
-- **M3 — Evolutionary prototype:** population, mutation, selection, elitism, diversity and generation histories.
+- **M3 — Evolutionary prototype (implemented as an experimental baseline):** seeded population, subset relocation/rotation, strict destination validity, fitness/diversity selection, elitism and JSON generation histories. Results and performance must still be benchmarked.
 - **M4 — Comparative experiments:** matched-seed, matched-budget evaluation against M2; independently validate archived best candidates.
 - **M5 — Melakat-inspired budget policy:** optional energy/resource-allocation experiment with ablation controls.
 - **M6 — Visualization & Kaggle adapter:** replay actual algorithm events and, after checking official competition rules/format, add a compatible submission exporter.
@@ -190,3 +190,35 @@ The core validates snapshots of rigid squares, not their swept collision-free ph
 ### Implementation status
 
 Phase 1 geometry was exercised against eight local checks before GitHub upload (valid grids, rotated unit edges, legal contact, overlap, out-of-bounds, tight bounding square, unrepaired overlaps and invalid inputs). CI in the repository has not yet independently confirmed them. The evolutionary engine is still pending.
+
+
+## Phase 3 — executable evolutionary motor (experimental)
+
+The first **actual evolutionary search** is implemented in `gerit/evolution.py` and invoked by `python -m gerit`. It makes real geometric proposals and runs the Phase 1 collision validator; progress is **not animated, precomputed, or guaranteed**.
+
+Run from repository root:
+
+```bash
+python -m unittest discover -s tests -v
+python -m gerit --config configs/five-squares.json --dry-run
+python -m gerit --config configs/five-squares.json --output results/five-squares-latest.json
+```
+
+Outputs include valid best-known packing coordinates and angles in **radians**, its measured side/area/unused area, exact run configuration, numeric-validation status, evaluations consumed, accepted children, and each generation's best-so-far value.
+
+The current evolutionary baseline:
+- Starts with an axis-aligned valid grid packing and generates initial variations by random validated relocations/rotations.
+- Mutates a randomly selected subset (sometimes the entire configuration). Candidate partial placements and completed offspring must pass rigid-square SAT validation at numeric tolerance **zero**. A proposed displacement is **not** asserted to have a physically traversable collision-free path.
+- Scores a feasible offspring by the axis-aligned tight enclosing square `L`; retaining all parents before selection guarantees preservation of the best observed valid result.
+- Selects configured fitness elites, plus a farthest-first diversity allocation based on unlabeled center distances and relative angle signatures.
+- Enforces configured evaluation and generation limits and records best-so-far history.
+- Retains validity but not necessarily distinctness when too few unique survivors exist; duplicates may be carried to fill the configured population.
+- Does **not** implement GPU/CPU worker parallelism, human drawing, agent/file initialization, crossovers, physical motion constraints, or a global optimum proof. `file` and `agent` initialization fail explicitly rather than silently using substitute parents.
+
+**Important performance caveat:** this first baseline uses rejection sampling for random repositioning, which can become extremely inefficient for densely packed solutions. It is a real search implementation but has not been shown to reach the known optimal five-square packing. Contact patterns and group rearrangement operators will be refined after measurement. The approximate diversity proxy does not perfectly identify every rotationally equivalent configuration.
+
+**Reproducibility / validity:** seeded deterministic random search is covered by regression tests in `tests/test_evolution.py`. Initial feasibility is checked numerically with zero SAT penetration tolerance, but floating-point arithmetic is not a certified proof. Independently verify any claimed result before submitting or publishing.
+
+### Development notes
+
+The initial strategy uses `grid_mutations` and `random_valid` initialization modes. The latter means independently mutated, strictly valid configurations from the grid control — **not** mathematically uniform sampling from all feasible packings. Repeated identical individuals may be present if the budget is exhausted or valid distinct candidates cannot be generated. The selection shares use the versioned configuration already documented above.
