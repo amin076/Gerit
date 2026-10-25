@@ -122,7 +122,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -130,6 +130,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     """
     import time
     from .records import RunRecorder, utc_now
+    from .adaptive import AdaptiveController, mutate_adaptive
     started_at=utc_now()
     clock=time.perf_counter()
     if cfg.initialization_source not in {"grid_mutations","random_valid"}:
@@ -137,10 +138,15 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     if cfg.diversity_metric!="center_distances_angles":
         raise ValueError("Unsupported diversity metric")
     rng=random.Random(cfg.seed)
+    adaptive_controller=AdaptiveController() if adaptive else None
+    def make_child(parent: Packing):
+        if adaptive_controller is not None:
+            return mutate_adaptive(parent,rng,cfg.initial_container_side,adaptive_controller)
+        return mutate(parent,rng,cfg.initial_container_side),None
     base=grid_baseline(cfg.n_squares)
     if cfg.initial_container_side+1e-12<base.container_side:
         raise ValueError("Initial container is smaller than grid baseline")
-    recorder=RunRecorder(output_dir,asdict(cfg),image_columns) if output_dir else None
+    recorder=RunRecorder(output_dir,{**asdict(cfg),"adaptive_enabled":adaptive},image_columns) if output_dir else None
     ids=iter(range(1,2**63))
     parents: list[tuple[int,Packing]]=[]
     evaluations=0
@@ -174,9 +180,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     parents=[seed]
     while len(parents)<cfg.initial_population and evaluations<cfg.max_evaluations:
         parent_id,parent=rng.choice(parents) if cfg.initialization_source=="grid_mutations" else parents[0]
-        child=mutate(parent,rng,cfg.initial_container_side)
+        child, mutation_meta=make_child(parent)
         item=propose(child,0,parent_id,"initial_mutation",
-                     {"changed_indices": [i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)
+                     (mutation_meta if adaptive else ({"changed_indices": [i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
         if item: parents.append(item)
     # Duplicated survival slots are deliberate but not new individuals.
     while len(parents)<cfg.initial_population:
@@ -206,9 +212,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         for parent_id,parent in old_parents:
             for _ in range(cfg.offspring_per_parent):
                 if evaluations>=cfg.max_evaluations: break
-                child=mutate(parent,rng,cfg.initial_container_side)
+                child, mutation_meta=make_child(parent)
                 item=propose(child,gen,parent_id,"offspring",
-                             {"changed_indices":[i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)
+                             (mutation_meta if adaptive else ({"changed_indices":[i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)))
                 if item: proposals.append(item)
             if evaluations>=cfg.max_evaluations: break
         pool=old_parents+proposals
@@ -244,7 +250,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "evaluations":evaluations,"accepted_children":accepted,
             "rejected_children":rejected,"stop_reason":stop_reason,
             "best_side":best.container_side,"best_individual_id":best_id,
-            "best_validation":asdict(validate_packing(best,tolerance=0.0))
+            "best_validation":asdict(validate_packing(best,tolerance=0.0)),
+            "adaptive_enabled":adaptive,
+            "adaptive_controller":adaptive_controller.snapshot() if adaptive_controller is not None else None
         })
         result.save(recorder.directory/"best_result.json")
     return result
