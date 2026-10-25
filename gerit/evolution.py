@@ -122,12 +122,16 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig) -> Result:
-    """A bounded, seeded (mu+lambda) evolutionary packing search.
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5) -> Result:
+    """Run a fully audited seeded experiment, retaining every proposal and selection.
 
-    No claim of global optimality. Unimplemented external population sources fail
-    explicitly instead of silently generating substitute populations.
+    When output_dir is given, emits persistent logs and one population PNG per
+    completed generation, including generation zero.
     """
+    import time
+    from .records import RunRecorder, utc_now
+    started_at=utc_now()
+    clock=time.perf_counter()
     if cfg.initialization_source not in {"grid_mutations","random_valid"}:
         raise NotImplementedError("file/agent initialization adapters are not implemented")
     if cfg.diversity_metric!="center_distances_angles":
@@ -136,35 +140,111 @@ def evolve(cfg: RunConfig) -> Result:
     base=grid_baseline(cfg.n_squares)
     if cfg.initial_container_side+1e-12<base.container_side:
         raise ValueError("Initial container is smaller than grid baseline")
-    baseline=verified(base.squares)
-    assert baseline is not None
-    population=[baseline]
-    evaluations=1
-    while len(population)<cfg.initial_population and evaluations<cfg.max_evaluations:
-        parent=rng.choice(population) if cfg.initialization_source=="grid_mutations" else baseline
-        child=mutate(parent,rng,cfg.initial_container_side)
-        evaluations+=1
-        if child is not None: population.append(child)
-    while len(population)<cfg.initial_population:
-        population.append(baseline)
-    best=min(population,key=lambda p:p.container_side)
-    history=[Generation(0,evaluations,best.container_side,best.container_side,len({tuple((s.x,s.y,s.angle) for s in p.squares) for p in population}),0)]
+    recorder=RunRecorder(output_dir,asdict(cfg),image_columns) if output_dir else None
+    ids=iter(range(1,2**63))
+    parents: list[tuple[int,Packing]]=[]
+    evaluations=0
     accepted=0
-    for g in range(1,cfg.max_generations+1):
-        if evaluations>=cfg.max_evaluations: break
-        children=[]
-        for parent in population:
+    rejected=0
+    def propose(packing: Packing | None, generation: int, parent_id: int | None,
+                origin: str, mutation: dict | None = None) -> tuple[int,Packing] | None:
+        nonlocal evaluations, accepted, rejected
+        uid=next(ids)
+        evaluations+=1
+        valid=packing is not None and validate_packing(packing,tolerance=0.0).valid
+        if origin!="seed":
+            if valid: accepted+=1
+            else: rejected+=1
+        if recorder:
+            recorder.append("individuals.jsonl",{
+                "individual_id":uid,"generation_created":generation,
+                "parent_ids":[] if parent_id is None else [parent_id],
+                "origin":origin,"valid":valid,
+                "rejected_reason":None if valid else "invalid_or_failed_mutation",
+                "container_side":packing.container_side if valid else None,
+                "squares":[asdict(s) for s in packing.squares] if valid else None,
+                "mutation":mutation,
+                "recorded_at":utc_now()
+            })
+        return (uid,packing) if valid else None
+    initial=verified(base.squares)
+    assert initial is not None
+    seed=propose(initial,0,None,"seed")
+    assert seed is not None
+    parents=[seed]
+    while len(parents)<cfg.initial_population and evaluations<cfg.max_evaluations:
+        parent_id,parent=rng.choice(parents) if cfg.initialization_source=="grid_mutations" else parents[0]
+        child=mutate(parent,rng,cfg.initial_container_side)
+        item=propose(child,0,parent_id,"initial_mutation",
+                     {"changed_indices": [i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)
+        if item: parents.append(item)
+    # Duplicated survival slots are deliberate but not new individuals.
+    while len(parents)<cfg.initial_population:
+        parents.append(parents[0])
+    best=min((p for _,p in parents),key=lambda p:p.container_side)
+    best_id=min(parents,key=lambda item:item[1].container_side)[0]
+    def snapshot(gen:int, children:int):
+        unique_ids=len(set(i for i,_ in parents))
+        population_best=min(p.container_side for _,p in parents)
+        value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,children)
+        if recorder:
+            recorder.append("generations.jsonl",{
+                **asdict(value),"selected_ids":[i for i,_ in parents],
+                "best_individual_id":best_id,"timestamp":utc_now(),
+                "elapsed_seconds":time.perf_counter()-clock
+            })
+            recorder.image(gen,parents,cfg.initial_container_side)
+        return value
+    history=[snapshot(0,0)]
+    stop_reason="max_generations"
+    for gen in range(1,cfg.max_generations+1):
+        if evaluations>=cfg.max_evaluations:
+            stop_reason="max_evaluations"
+            break
+        proposals=[]
+        old_parents=list(parents)
+        for parent_id,parent in old_parents:
             for _ in range(cfg.offspring_per_parent):
                 if evaluations>=cfg.max_evaluations: break
                 child=mutate(parent,rng,cfg.initial_container_side)
-                evaluations+=1
-                if child is not None: children.append(child)
+                item=propose(child,gen,parent_id,"offspring",
+                             {"changed_indices":[i for i,(x,y) in enumerate(zip(parent.squares,child.squares)) if x!=y]} if child else None)
+                if item: proposals.append(item)
             if evaluations>=cfg.max_evaluations: break
-        accepted+=len(children)
-        population=select(population+children,cfg)
-        current=min(population,key=lambda p:p.container_side)
-        if current.container_side<best.container_side: best=current
-        history.append(Generation(g,evaluations,best.container_side,current.container_side,len({tuple((s.x,s.y,s.angle) for s in p.squares) for p in population}),len(children)))
+        pool=old_parents+proposals
+        survivor_packings=select([p for _,p in pool],cfg)
+        # Preserve individual identity, even when identical geometries coexist.
+        members_by_identity={id(p):(uid,p) for uid,p in pool}
+        parents=[members_by_identity[id(p)] for p in survivor_packings]
+        current_id,current=min(parents,key=lambda item:item[1].container_side)
+        if current.container_side<best.container_side:
+            best,best_id=current,current_id
+        if recorder:
+            selected_ids={i for i,_ in parents}
+            for uid,p in pool:
+                recorder.append("selection.jsonl",{
+                    "generation":gen,"individual_id":uid,"selected":uid in selected_ids,
+                    "reason":"survived_selection" if uid in selected_ids else "not_selected",
+                    "side":p.container_side
+                })
+        history.append(snapshot(gen,len(proposals)))
+        if evaluations>=cfg.max_evaluations:
+            stop_reason="max_evaluations"
+            break
     assert validate_packing(best,tolerance=0.0).valid
     assert all(y.best_side<=x.best_side+1e-12 for x,y in zip(history,history[1:]))
-    return Result(cfg,best,tuple(history),evaluations,accepted)
+    result=Result(cfg,best,tuple(history),evaluations,accepted)
+    if recorder:
+        recorder.write("run_summary.json",{
+            "started_at":started_at,"finished_at":utc_now(),
+            "elapsed_seconds":time.perf_counter()-clock,
+            "completed_generations":len(history)-1,
+            "population_snapshots":len(history),
+            "population_images":len(history),
+            "evaluations":evaluations,"accepted_children":accepted,
+            "rejected_children":rejected,"stop_reason":stop_reason,
+            "best_side":best.container_side,"best_individual_id":best_id,
+            "best_validation":asdict(validate_packing(best,tolerance=0.0))
+        })
+        result.save(recorder.directory/"best_result.json")
+    return result
