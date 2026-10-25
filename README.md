@@ -109,3 +109,47 @@ No license is declared by this README. Before copying implementation code from o
 ---
 
 Gerit begins as a **research experiment**, not as a claim that evolutionary search necessarily outperforms established square-packing methods. The first priority is a trustworthy geometric validator and an honestly measured baseline.
+
+
+## Configurable experiments (scaffold implemented)
+
+Parameters are **not hard-coded into the evolutionary engine**. The first Python configuration/CLI scaffold is committed under `gerit/config.py`, `gerit/__main__.py`, and `configs/five-squares.json`. It **validates and previews** an experiment; it does **not** yet run evolution or validate geometry.
+
+Run a configuration preview:
+
+```bash
+python -m gerit --config configs/five-squares.json --dry-run
+python -m unittest discover -s tests -v
+```
+
+Example configuration:
+
+```json
+{
+  "schema_version": "gerit-run-config-0.1",
+  "n_squares": 5,
+  "initial_population": 20,
+  "next_generation_population": 20,
+  "offspring_per_parent": 5,
+  "selection_groups": [
+    {"method": "fitness", "share": 0.75},
+    {"method": "diversity", "share": 0.25}
+  ],
+  "initialization_source": "grid_mutations",
+  "initial_container_side": 3.0,
+  "diversity_metric": "center_distances_angles",
+  "seed": 17,
+  "max_generations": 100,
+  "max_evaluations": 100000
+}
+```
+
+- `initial_population` means the number of initial parents and may differ from `next_generation_population`, the number retained after selection. `offspring_per_parent` is independent of both.
+- Selection quotas are allocated by the **largest-remainder** rounding rule, so they always sum to the desired next-generation size even for totals like 30 (75%/25% becomes 23/7).
+- Current registered selection groups are `fitness` (smallest **validated** enclosing-square side) and `diversity` (maximize distance from already selected layouts subject to validity and a defined quality ceiling). The concrete selection engine and distance function are **not implemented yet**.
+- The selection-group schema is extensible (`method`, `share`, `options`). A future third method such as `novelty` can be added by **implementing and registering** it; unknown methods currently raise a clear error rather than silently pretending to execute.
+- Initialization sources are `grid_mutations`, `random_valid`, `file`, and `agent`. The `file` mode requires an `initialization_file` path; `agent` requires an `agent_adapter`. These are **declared future adapters**, not yet runnable generators.
+- Human-drawn layouts should enter through a separate user-interface/coordinate-conversion adapter and use the same file schema and independent geometry checker as generated layouts. Agent-generated layouts are untrusted proposals and require validation; neither visual resemblance nor an agent assertion is proof of feasibility.
+- Seed, generation/evaluation budgets and the diversity metric are explicit to support fair tests. More computational controls (workers, CPU/GPU backend, wall-time) may be added as versioned fields when execution backends exist.
+
+**Research design:** compare grid-only, randomized valid initial populations, and later optional agent/human-proposed seed populations under the same evaluation budget. Do not assume agents produce higher-quality initial placements without measured evidence.
