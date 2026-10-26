@@ -416,3 +416,48 @@ experiment/reproducibility:
 The downloadable audit archive from the experiment contains every initial
 square configuration, 21 snapshots per arm, lineage, learned policy genome,
 validity evidence, and independent Shapely checks.
+
+
+## Cost-aware learning v2: matched geometry budget (12-square pilot)
+
+The experimental controller `gerit/reward_v2.py` changes **only policy
+credit assignment**, keeping the continuous proposal families, compressor,
+and 90% fitness / 10% diversity selection unchanged.
+
+- Separately record the raw mutation's side improvement relative to **its own
+  parent**, any extra compression-stage improvement, and geometric
+  `validate_packing` calls spent on mutation and compression.
+- Full credit goes to helpful direct mutations, partial credit to improvement
+  primarily achieved through local compression, and a small cost-sensitive
+  penalty to invalid or non-improving proposals.
+- Each surviving child inherits learned action-family, direction and
+  step-range weights. A shared population policy also learns from every
+  outcome. Frozen-policy control uses the **same exact operators** without
+  updating probabilities.
+- `scripts/run_reward_v2_benchmark.py` runs three paired seeds
+  (`2601,2602,2603`) with three arms: new credit v2, old credit v1, and
+  frozen weights. Every arm consumes **exactly 12,000 geometric validation
+  calls**, or 108,000 across 9 runs; born-child counts and walltimes vary.
+- All runs started from exactly the same 100 valid selected 12-square
+  individuals of Round 13. Every run completed **3 full generations plus
+  part of generation 4** at this cost cap.
+
+| Seed | New cost-aware reward | Frozen policy | Original reward |
+|---|---:|---:|---:|
+| 2601 | 4.187556116669 | 4.201765010201 | **4.186057463759** |
+| 2602 | **4.190364604733** | 4.197248420198 | 4.202374039183 |
+| 2603 | **4.177265223774** | 4.186968653167 | 4.205571999668 |
+| Mean | **4.185061981725** | 4.195327361189 | 4.198001167536 |
+
+The v2 policy beat frozen weights under this proxy cost budget in **3/3**
+seeds and beat v1 in **2/3** seeds. The six new v2 regression tests and six
+older learning tests passed. Independent
+`scripts/verify_reward_v2.py` checked every valid proposal, ancestry,
+all **900 final selected geometries**, and Shapely positive-area intersections.
+
+**Caution:** validation calls do *not* equal wall-clock cost or individual SAT
+axis projections. Three seeds and about three generations are a small pilot;
+this is not statistically convincing proof of a durable advantage.
+All nine best sides remain above the simple `L=4` grid packing. The
+experimental runner is separate from the default `--learning` CLI option;
+that option still uses the original reward unless upgraded explicitly.
