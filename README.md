@@ -288,3 +288,13 @@ py -3 scripts/run_adaptive_tilings.py --input data/connected23.json --tiling-see
 
 Read [full details and scientific attribution notes](docs/CONNECTED_TILINGS.md). Prior auto/v4 runners remain unchanged and usable for fair unseeded controls; no new dependencies.
 
+### Fix for connected tilings and inherited v4 stagnation history
+
+The **2026-10-27 hotfix** resets only the rolling stagnation timer if newly injected constructed layouts provide a better initial best (such as 12-square L=4 replacing an imported best near 4.005). Before this fix, a saved progress window could trigger `ValueError: Saved rolling best does not match imported best`. Learning weights and original provenance stay intact. With `--tiling-seeds 0`, the previous window is still inherited.
+
+If a prior attempt created `results/round22-connected` and failed before generation 1, do **not** reuse that existing directory. Continue safely with:
+
+```powershell
+git pull --ff-only
+py -3 scripts/run_adaptive_tilings.py --input results/round21-adaptive-v4/selected_population_final.json --generations 300 --seed 2613 --output-dir results/round22-connected-fixed --tiling-seeds 3
+```
