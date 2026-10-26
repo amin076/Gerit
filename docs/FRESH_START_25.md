@@ -16,7 +16,7 @@ No `--input` parameter is present. No previous `results` files are loaded. **Do 
 ## Initialization — generation 0
 
 - 7 geometrically distinct connected all-parallel integer-cell arrangements (from `gerit.connected_tilings.choose_tilings`), including a guaranteed feasible `L=ceil(sqrt(12))=4` baseline.
-- 18 other arrangements sampled reproducibly with new randomness, combining rigidly rotated blocks, jittered/tilted sparse contacts and scattered lattice occupancy.
+- 18 other arrangements sampled reproducibly with new randomness, combining spatially grouped *relative* square rotations, independent per-square tilts, and sparse randomized occupancy.
 - All 25 are strictly checked for non-overlap and containment before the run starts. There is no inherited individual or global learned policy; **every probability weight begins neutral (zero)**.
 - After generation zero, *all 25 compete equally* regardless of whether the initial shape was constructive or stochastic. The initial source is kept in the audit log, but is **never part of the selection score**. A nonconstructive shape can take any selection slot, and its descendants have no protected source quota.
 
@@ -63,10 +63,10 @@ based on the very same canonical grid.
 
 **Initializer update (applies only to subsequent runs):** the stochastic slots
 now use a bank of *distinct constructed silhouettes* as their geometric starting
-points, with mild rigid tilts and modest individually rotated/perturbed layouts
+points, initially with mild rigid tilts and modest individually rotated/perturbed layouts
 near the `ceil(sqrt(n))` reference; occasional sparse wide explorers remain.
 For the standard n=12, 25-parent case, the reproducible initial mix is 7
-constructive + 9 rigidly rotated + 6 individually perturbed + 3 sparse.
+constructive + 9 subgroup-oriented + 6 individually perturbed + 3 sparse. The first initializer-v2 pilot still used globally rigid rotations, which gave no intrinsic relative-angle novelty.
 In a one-generation preflight using seed 2715, six stochastic-origin lineages
 survived selection versus three in the historical archived run. This is a
 **one-generation diagnostic only**; it does not establish better long-run
@@ -89,3 +89,58 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 Run one seed only for exploration; compare several matched seeds and equal
 geometry-check budgets before claiming the revised initialization performs
 better. Do not attribute constructive generation-zero L=4 to evolution.
+
+## Follow-up after 30-generation initializer-v2 pilot — genuine orientation diversity
+
+In the independent 30-generation pilot, **no** imported parents were used,
+and the user-reported summary was:
+
+- `competitive_stochastic_initial_count=15` (starting stochastic L <= 4.4)
+- `final_near_best_parent_count=23` (25 parents at generation 30)
+- `final_ancestry_counts`: 23 connected tiling, 2 random sparse, **0 random rotated or perturbed**
+
+This is not by itself evidence that ancestry needs protected quotas. The
+`random_rotated` branch in initializer v2 was a **single rigid rotation of
+every unit square together**, so each square still had *zero relative
+rotation*; the branch added little independent geometric structure. The six
+`random_perturbed` starts had only ~0.005 radians relative-angle RMS. Thus
+15 initially competitive **side lengths** did not imply 15 structurally
+independent candidates.
+
+**Initializer v3** changes the 9 `random_rotated` slots into two spatial
+subgroups with **opposite individual-square tilts**, and the 6 `random_perturbed`
+slots now have larger independently sampled square angles and small center
+jitter. All geometries are still fully checked; for n=12 and seed 2715, all
+15 compact stochastic starters have actual relative-angle variance and L <=
+4.4. Three sparse explorations remain. The search algorithm, competition
+quotas, and ancestry-neutral selection are *not* changed.
+
+The new `relative_orientation_parent_count` in each generation snapshot
+counts packings with relative square orientation spread > 0.01 radians,
+modulo square symmetry (pi/2), and is invariant under rotation of the entire
+packing. Summary fields are `initial_relative_orientation_count` and
+`final_relative_orientation_parent_count`. A one-generation preflight with
+seed 2715 produced **5** genuinely relative-rotated selected genomes out of
+25; the older initializer had structurally redundant global rotations.
+Long-run retention and fitness **are not yet established**.
+
+Run the v3 initializer in a **new** pilot folder:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --output-dir results/fresh12-p25-initv3-pilot30
+
+$r = Get-Content "results/fresh12-p25-initv3-pilot30/run_summary.json" -Raw | ConvertFrom-Json
+$r | Select-Object best_side, initial_relative_orientation_count, final_relative_orientation_parent_count
+$r.final_ancestry_counts
+
+Get-Content "results/fresh12-p25-initv3-pilot30/generations.jsonl" | ConvertFrom-Json |
+  Where-Object { $_.generation -in 0, 1, 10, 20, 30 } |
+  Select-Object generation, near_best_parent_count, relative_orientation_parent_count, selected_ancestry_counts
+```
+
+The previous v2 pilot is an independent fixed historical comparison, not
+training input. Run the next 300-generation study only if these diagnostics
+justify it; prefer matched seeds and geometry-check budgets.
