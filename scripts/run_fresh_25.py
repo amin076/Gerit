@@ -151,6 +151,15 @@ def verify_run(directory:Path,summary:dict)->dict:
     assert sum(summary['mode_valid_children'].values())==summary['valid_children']
     assert sum(summary['mode_generations'].values())==g
     assert sum(summary['mode_geometry_checks'].values())==summary['total_geometry_checks']
+    for strategy, trials in summary['structural_move_proposals'].items():
+        good=summary['structural_move_valid_children'].get(strategy,0)
+        assert summary['structural_move_geometry_checks'].get(strategy,0)>=0
+        improved=summary['structural_move_parent_improving_children'].get(strategy,0)
+        picked=summary['structural_move_selected_children'].get(strategy,0)
+        picked_improved=summary['structural_move_selected_parent_improving_children'].get(strategy,0)
+        picked_tilted=summary['structural_move_selected_strong_orientation_children'].get(strategy,0)
+        assert 0<=picked_improved<=min(picked,improved)<=good<=trials
+        assert 0<=picked_tilted<=picked
     ids={x['individual_id'] for x in individuals}
     assert len(ids)==len(individuals)
     for row in individuals:
@@ -172,12 +181,14 @@ def verify_run(directory:Path,summary:dict)->dict:
 def run(*,squares:int=12,population:int=25,generations:int=300,
         seed:int=2715,directory:Path|str='results/fresh12-p25-g300',
         structural_seeds:int=7,offspring_per_parent:int=5,
-        cap_margin:float=.15,make_zip:bool=True,
+        cap_margin:float=.15,contact_probability:float=.70,make_zip:bool=True,
         stagnation_settings:StagnationSettings|None=None,
         window_settings:WindowSettings|None=None)->dict:
     if type(generations) is not int or generations<1:raise ValueError('generations must be >=1')
     if type(offspring_per_parent) is not int or offspring_per_parent<1:raise ValueError('offspring_per_parent must be >=1')
     if not math.isfinite(cap_margin) or cap_margin<0:raise ValueError('cap_margin must be finite and nonnegative')
+    if not math.isfinite(contact_probability) or not 0<=contact_probability<=1:
+        raise ValueError('contact_probability must be finite and between 0 and 1')
     directory=Path(directory).expanduser().resolve()
     if directory.exists():raise FileExistsError(f'Output directory exists: {directory}. Choose a NEW --output-dir')
     # Generate and fully validate BEFORE allocating output directories.
@@ -198,6 +209,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     modes=Counter();stats=Counter();action_counts=Counter();mode_births=Counter();mode_valid=Counter()
     mode_checks=Counter();mode_record_events=Counter();mode_record_gain=Counter()
     structural_modes=Counter();structural_valid=Counter();structural_selected=Counter()
+    structural_parent_improving=Counter();structural_selected_parent_improving=Counter()
+    structural_checks=Counter()
+    structural_selected_strong_angles=Counter()
     initial_origin_breakdown=dict(Counter(initial_kind.values()))
     stochastic_initial_sides=[p.container_side for uid,p in pop
                               if initial_kind[uid]!='connected_tiling']
@@ -229,7 +243,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             'orientation_niche_max_above_best_side':0.45,
             'orientation_niche_target_normal':round(.12*population),
             'orientation_niche_target_diversify':round(.20*population),
-            'structural_relocation':'70% contact-guided near-edge placements, 30% original uniform relocations',
+            'structural_relocation':f'{contact_probability:.0%} contact-guided; {1-contact_probability:.0%} original uniform relocations',
+            'contact_probability':contact_probability,
             'normal_quota':{'quality':round(.64*population),'frontier':round(.08*population)},
             'stagnating_quota':{'quality':round(.52*population),'frontier':round(.12*population)},
             'compressor':asdict(compressor),'stagnation':asdict(stagnation.settings),
@@ -273,6 +288,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         for generation in range(1,generations+1):
             mode=stagnation.mode(generation-1)
             old=list(pop);children=[];previous_record=best.container_side
+            generation_birth_operator={}  # valid structural offspring only
+            generation_birth_parent_improvement={}  # endpoint L < parent L
             generation_valid=0
             for uid,parent in old:
                 for _ in range(offspring_per_parent):
@@ -284,10 +301,10 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                         raw,meta=propose_micro(parent,rng,parent_cap)
                     elif mode=='escape' and chance<.42:
                         raw,meta=(propose_contact_relocate(parent,rng,parent_cap)
-                                  if rng.random()<.70 else propose_reconfigure(parent,rng,parent_cap))
+                                  if rng.random()<contact_probability else propose_reconfigure(parent,rng,parent_cap))
                     elif mode=='diversify' and chance<.60:
                         raw,meta=(propose_contact_relocate(parent,rng,parent_cap)
-                                  if rng.random()<.70 else propose_reconfigure(parent,rng,parent_cap))
+                                  if rng.random()<contact_probability else propose_reconfigure(parent,rng,parent_cap))
                     elif mode in ('escape','diversify') and chance<.75:
                         raw,meta=propose_micro(parent,rng,parent_cap)
                     else:
@@ -312,12 +329,18 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                     if valid and final_gain>1e-8:stats['final_improving']+=1
                     if valid and compression_gain>1e-8:stats['compression_improving']+=1
                     action_counts[meta['action']]+=1
-                    if meta.get('move_strategy')=='contact_guided':
-                        structural_modes['contact_guided']+=1
-                        if valid:structural_valid['contact_guided']+=1
-                    elif meta.get('action')=='structural_relocate':
-                        structural_modes['uniform_relocate']+=1
-                        if valid:structural_valid['uniform_relocate']+=1
+                    move_operator = ('contact_guided' if meta.get('move_strategy')=='contact_guided'
+                                     else 'uniform_relocate' if meta.get('action')=='structural_relocate'
+                                     else None)
+                    if move_operator is not None:
+                        structural_checks[move_operator]+=used_raw+used_comp
+                        structural_modes[move_operator]+=1
+                        if valid:
+                            structural_valid[move_operator]+=1
+                            generation_birth_operator[next_id]=move_operator
+                            improved=final_gain>1e-8
+                            generation_birth_parent_improvement[next_id]=improved
+                            if improved:structural_parent_improving[move_operator]+=1
                     policy,feedback=controller.update(weights[uid],meta,valid,raw_gain,
                            compression_gain,parent.container_side,used_raw,used_comp,
                            global_best_side=best.container_side,train=True)
@@ -341,6 +364,14 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                 selected[-1]=(best_id,best)
             pop=selected
             survivors={uid for uid,_ in pop}
+            for uid,p in pop:
+                op=generation_birth_operator.get(uid)
+                if op is not None:
+                    structural_selected[op]+=1
+                    if generation_birth_parent_improvement[uid]:
+                        structural_selected_parent_improving[op]+=1
+                    if relative_angle_spread(p)>0.02:
+                        structural_selected_strong_angles[op]+=1
             for uid,p in pool:
                 append_jsonl(sel,{'generation':generation,'individual_id':uid,
                       'selected':uid in survivors,'side':p.container_side})
@@ -395,6 +426,12 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'mode_record_events':dict(mode_record_events),'mode_record_gain':dict(mode_record_gain),
         'structural_move_proposals':dict(structural_modes),
         'structural_move_valid_children':dict(structural_valid),
+        'structural_move_geometry_checks':dict(structural_checks),
+        'structural_move_parent_improving_children':dict(structural_parent_improving),
+        'structural_move_selected_children':dict(structural_selected),
+        'structural_move_selected_parent_improving_children':dict(structural_selected_parent_improving),
+        'structural_move_selected_strong_orientation_children':dict(structural_selected_strong_angles),
+        'contact_probability':contact_probability,
         'action_proposals':dict(action_counts),'stagnation':stagnation.snapshot(),
         'controller':controller.snapshot(),
         'final_selected_max_positive_overlap_area':overlap,
@@ -441,7 +478,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
        f'Global grid L={grid.grid_upper_side} is constructed, not independently discovered.\n'
        f'Run: python scripts/run_fresh_25.py --squares {squares} --population {population} '
        f'--structural-seeds {structural_seeds} --offspring-per-parent {offspring_per_parent} '
-       f'--cap-margin {cap_margin} --generations {generations} --seed {seed} '
+       f'--cap-margin {cap_margin} --contact-probability {contact_probability} '
+       f'--generations {generations} --seed {seed} '
        f'--output-dir <new directory>\n',encoding='utf-8')
     dependency_paths=[Path(__file__),ROOT/'gerit'/'fresh_population.py',
       ROOT/'gerit'/'contact_relocation.py',ROOT/'gerit'/'connected_tilings.py',ROOT/'gerit'/'grid_bounds.py',
@@ -475,6 +513,8 @@ if __name__=='__main__':
     parser.add_argument('--offspring-per-parent',type=int,default=5)
     parser.add_argument('--seed',type=int,default=2715)
     parser.add_argument('--cap-margin',type=float,default=.15)
+    parser.add_argument('--contact-probability',type=float,default=.70,
+                        help='Share of structural relocation calls using contact guidance, 0..1 (default 0.70)')
     parser.add_argument('--output-dir',type=Path,default=Path('results/fresh12-p25-g300'))
     parser.add_argument('--no-zip',action='store_true')
     # Optional accelerated stagnation phases for short mechanism-only pilots.
@@ -492,5 +532,6 @@ if __name__=='__main__':
     print(json.dumps(run(squares=args.squares,population=args.population,
          structural_seeds=args.structural_seeds,generations=args.generations,
          offspring_per_parent=args.offspring_per_parent,seed=args.seed,
-         cap_margin=args.cap_margin,directory=args.output_dir,make_zip=not args.no_zip,
+         cap_margin=args.cap_margin,contact_probability=args.contact_probability,
+         directory=args.output_dir,make_zip=not args.no_zip,
          stagnation_settings=phases),indent=2))
