@@ -39,7 +39,10 @@ class EvolutionTests(unittest.TestCase):
         cfg=RunConfig(initial_population=8,next_generation_population=6,
                       max_evaluations=2,max_generations=20)
         result=evolve(cfg)
-        self.assertLessEqual(result.evaluations,2)
+        self.assertEqual(result.evaluations,2)
+        # Early budget exhaustion during initialization is a valid stop;
+        # only the generation-zero snapshot exists in that case.
+        self.assertEqual(len(result.history),1)
 
 if __name__=="__main__":
     unittest.main()
