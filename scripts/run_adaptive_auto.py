@@ -1,0 +1,527 @@
+"""Adaptive Gerit v4, using rolling-window weak-progress detection.
+
+Run with `python scripts/run_adaptive_v4.py` from the cloned repository root.
+Supply the most recent 20-parent selected_population_final.json via --input.
+"""
+from __future__ import annotations
+import argparse, csv, copy, hashlib, json, random, shutil, sys, time, zipfile
+from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
+
+BASE=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(BASE))
+from gerit import learning as learning_mod, local_compression as compression_mod
+from gerit.geometry import Packing,Square,validate_packing,square_vertices
+from gerit.selection import select
+from gerit.learning import propose_learned,ACTIONS
+from gerit.adaptive_v4 import (AdaptiveCreditController, normalize_policy, ProgressAwareStagnationController,
+                            StagnationSettings, WindowSettings, propose_micro, propose_reconfigure)
+from gerit import adaptive_v3 as adaptive_mod
+from gerit.local_compression import CompressionSettings,compress_valid
+from gerit.visualization import draw_population as draw_mosaic, draw_best, draw_progress
+from gerit.grid_bounds import grid_bounds, automatic_search_cap
+
+SOURCE=BASE/'data'/'round15_selected_population_final.json'
+DEFAULT_RUN=BASE/'results'/'local_adaptive_v3_continuation'
+
+DEFAULT_SEED=2607
+N=20
+OFFSPRING_PER_PARENT=5
+LEGACY_SIDE_CAP=5.0  # preserved as an explicit --side-cap 5 option
+
+class GeometryCounter:
+    def __init__(self):
+        self.raw=0;self.comp=0;self.phase='raw'
+    def __enter__(self):
+        self.orig_learning=learning_mod.validate_packing
+        self.orig_compression=compression_mod.validate_packing
+        self.orig_adaptive=adaptive_mod.validate_packing
+        def count(*args,**kwargs):
+            if self.phase=='raw': self.raw+=1
+            elif self.phase=='comp':self.comp+=1
+            else:raise RuntimeError('Unexpected geometry phase')
+            return self.orig_learning(*args,**kwargs)
+        self._count=count
+        learning_mod.validate_packing=count
+        compression_mod.validate_packing=count
+        adaptive_mod.validate_packing=count
+        return self
+    def __exit__(self,*exc):
+        learning_mod.validate_packing=self.orig_learning
+        compression_mod.validate_packing=self.orig_compression
+        adaptive_mod.validate_packing=self.orig_adaptive
+
+def append_jsonl(f,item):
+    f.write(json.dumps(item,ensure_ascii=False,separators=(',',':'))+'\n')
+
+def init_pop(source_file: Path):
+    # Source of truth: last run's 100 final selected members and learned genomes.
+    # Source bytes and 20-member initialization are archived for provenance.
+    data=source_file.read_bytes()
+    source=json.loads(data)
+    members=source['selected_members']
+    if len(members)!=N: raise ValueError(f'Expected {N} imported parents, got {len(members)}')
+    if 'global_policy' not in source: raise ValueError('Input file lacks inherited global_policy')
+    all_previous=[]
+    by_identity={}
+    n_squares=None
+    for m in members:
+        p=Packing(tuple(Square(**sq) for sq in m['squares']),float(m['container_side']))
+        if not validate_packing(p,tolerance=0.0).valid:
+            raise ValueError(f'Invalid 12-square packing for source ID {m["individual_id"]}')
+        if n_squares is None: n_squares=len(p.squares)
+        if len(p.squares)!=n_squares: raise ValueError('All parents must have same square count')
+        all_previous.append((int(m['individual_id']),p))
+        by_identity[id(p)]=m
+        assert 'policy' in m, 'Each imported parent must have learned policy'
+    if len({uid for uid,p in all_previous})!=N:
+        raise ValueError('Source contains duplicate parent IDs')
+    # Reuse the exact 20 selected survivors and each individual's learned policy.
+    # The 18+2 quota applies to selection of each NEXT generation, not to
+    # reselecting/duplicating the 20 input parents.
+    initial_members=members
+    population=list(all_previous)
+    assert len(population)==N and len({uid for uid,p in population})==N
+    policies={int(m['individual_id']):copy.deepcopy(m['policy']) for m in initial_members}
+    source_sha=hashlib.sha256(data).hexdigest()
+    selected_bytes=json.dumps({'generation':0, 'selected_members':initial_members,
+            'global_policy':source['global_policy'], 'full_source_sha256':source_sha},
+            ensure_ascii=False,indent=2).encode('utf-8')
+    return population,hashlib.sha256(selected_bytes).hexdigest(),selected_bytes,policies,copy.deepcopy(source['global_policy']),source_sha,max(int(m['individual_id']) for m in members)
+
+def geometry_check_shapely(packing):
+    try:
+        from shapely.geometry import Polygon,box
+    except ImportError:
+        return {'available':False}
+    polys=[Polygon(square_vertices(s)) for s in packing.squares]
+    overlaps=[polys[i].intersection(polys[j]).area for i in range(len(polys)) for j in range(i+1,len(polys))]
+    bound=box(0,0,packing.container_side,packing.container_side)
+    outside=[poly.difference(bound).area for poly in polys]
+    return {'available':True,'max_overlap_area':max(overlaps,default=0.0),
+            'max_outside_area':max(outside,default=0.0),
+            'min_square_area':min(poly.area for poly in polys),
+            'max_square_area':max(poly.area for poly in polys)}
+
+def run(generations:int=100, seed:int=DEFAULT_SEED,
+        directory:Path=DEFAULT_RUN, make_zip:bool=True,
+        source_file:Path=SOURCE, stagnation_settings:StagnationSettings|None=None,
+        window_settings:WindowSettings|None=None,
+        side_cap_setting:str|float="auto", cap_margin:float=0.15):
+    if generations < 1: raise ValueError('generations must be >= 1')
+    source_file=Path(source_file).expanduser().resolve()
+    if not source_file.is_file(): raise FileNotFoundError(f'Input population missing: {source_file}')
+    directory=Path(directory).expanduser().resolve()
+    # Never delete or silently overwrite a previous scientific run.
+    if directory.exists(): raise FileExistsError(f'Output directory exists: {directory}\nPass a NEW --output-dir')
+    directory.mkdir(parents=True)
+    imgs=directory/'generation_images';imgs.mkdir()
+    source_code=directory/'source_code';source_code.mkdir()
+    pop,sha,source_bytes,source_policy,source_global_policy,source_full_sha,source_max_id=init_pop(source_file)
+    n_squares=len(pop[0][1].squares)
+    known_grid=grid_bounds(n_squares)
+    imported_max_side=max(p.container_side for _,p in pop)
+    if side_cap_setting == 'auto':
+        # Focused parents have an n-aware ceiling close to the grid reference.
+        # Diverse, worse parents retain the possibility to make exploratory moves
+        # near their *own* side rather than being discarded or forcibly cropped.
+        side_cap=automatic_search_cap((min(p.container_side for _,p in pop),),n_squares,cap_margin)
+    else:
+        side_cap=float(side_cap_setting)
+        if not __import__('math').isfinite(side_cap) or side_cap < imported_max_side - 1e-10:
+            raise ValueError(f'Explicit side cap {side_cap} cannot be smaller than largest imported parent {imported_max_side}')
+    # Each mosaic cell now depicts that individual's actual enclosing side.
+    plot_scale='each_packing_actual_side'
+    print(f'GRID_REFERENCE n={n_squares} feasible_L={known_grid.grid_upper_side} '
+          f'area_lower_L={known_grid.area_lower_side:.9f} '
+          f'parents_best={min(p.container_side for _,p in pop):.12f} '
+          f'focused_cap={side_cap:.9f} cap_mode={side_cap_setting} '
+          f'plot_scale=actual_individual_side',flush=True)
+    (directory/'input_selected_population.json').write_bytes(source_bytes)
+    (directory/'source_population_metadata.json').write_text(json.dumps({'source_path':str(source_file),'source_sha256':source_full_sha,'selection_rule':'all 20 previous final survivors, in original order','selected_ids':[uid for uid,p in pop]},indent=2),encoding='utf-8')
+    ctl=AdaptiveCreditController()
+    ctl.global_policy=normalize_policy(source_global_policy)
+    stagnation=ProgressAwareStagnationController(min(p.container_side for uid,p in pop), stagnation_settings,window_settings)
+    inherited_metadata=json.loads(source_file.read_text(encoding='utf-8'))
+    grid_initialized=(inherited_metadata.get('initialization_kind') == 'explicit_known_grid_baseline')
+    if 'adaptive_controller' in inherited_metadata:
+        ctl.baseline_by_context.update(inherited_metadata['adaptive_controller'].get('reward_baselines', {}))
+    if 'stagnation_state' in inherited_metadata:
+        previous=inherited_metadata['stagnation_state']
+        carried_idle=max(0, int(previous.get('elapsed_generations',0))-
+                           int(previous.get('last_significant_generation',0)))
+        stagnation.last_significant_generation=-carried_idle
+    stagnation.restore_progress(inherited_metadata.get('stagnation_state',{}).get('progress'),
+                                source_file.parent/'generations.jsonl')
+    stagnation.previous_mode=stagnation.mode(0)
+    compressor=CompressionSettings()
+    state={uid:normalize_policy(source_policy[uid]) for uid,p in pop}
+    rng=random.Random(seed)
+    nextid=source_max_id+1
+    best_id,best=min(pop,key=lambda up:up[1].container_side)
+    baseline=best.container_side
+    init_population_snapshot=list(pop)
+    counts=Counter()
+    action_counts=Counter();action_valid=Counter();action_gain=Counter()
+    mode_births=Counter();mode_valid=Counter();mode_final_improving=Counter();mode_direct_improving=Counter()
+    mode_geometry_checks=Counter();mode_record_events=Counter();mode_record_gain=Counter()
+    operator_record_events=Counter();operator_record_gain=Counter();operator_selected_births=Counter()
+    birth_actions={};birth_modes={}
+    started=time.perf_counter();history=[]
+    (directory/'config.json').write_text(json.dumps({
+        'source_final_population_file':str(source_file),'source_generation':json.loads(source_file.read_text(encoding='utf-8')).get('generation','unknown'),
+        'source_full_population_sha256':source_full_sha,'input_20_selected_sha256':sha,
+        'selection_from_source_20':'all 20 final survivors, preserving learned policy genomes',
+        'squares':n_squares,'population':N,'generations':generations,'seed':seed,'side_cap':side_cap,
+        'cap_setting':side_cap_setting,'cap_margin':cap_margin,'imported_parent_max_side':imported_max_side,
+        'plot_scale':plot_scale,'grid_baseline':known_grid.to_dict(),
+        'side_cap_strategy':'auto: per-parent max(focused cap, current parent side + margin)' if side_cap_setting=='auto' else 'fixed explicit cap',
+        'offspring_per_parent_per_generation':OFFSPRING_PER_PARENT,'quality_slots':18,'diversity_slots':2,
+        'mutation':'10 inherited continuous directional families plus targeted micro refinement and structural relocation during stagnation',
+        'reward_version':'v4 progress-aware search with unchanged v3 centered-relative learned credit',
+        'adaptive_settings':asdict(ctl.adaptive_settings),
+        'inherited_stagnation_idle':-stagnation.last_significant_generation,
+        'stagnation_settings':asdict(stagnation.settings),
+        'rolling_progress_settings':asdict(stagnation.window_settings),
+        'prior_rolling_history_source':stagnation.history_source,
+        'known_grid_injected':grid_initialized,
+        'local_compression_settings':asdict(compressor),
+        'notes':'Exactly 20 imported survivors and their v3 learned policies. Rolling 80-generation progress detects tiny gains despite recent records. Independent elite archive; no known grid injected. New seed is not bitwise RNG continuation.'
+    },indent=2,ensure_ascii=False),encoding='utf-8')
+    def snapshot(gen,accepted,mode):
+        row={'generation':gen,'best_side':best.container_side,'best_id':best_id,
+             'search_mode':mode, 'stagnation_generations':gen-stagnation.last_significant_generation,
+             'rolling_window_gain':stagnation.window_gain,
+             'rolling_weak_streak':stagnation.weak_progress_streak,
+             'population_best':min(p.container_side for _,p in pop),
+             'selected_ids':[uid for uid,p in pop],
+             'valid_children':accepted,'total_births':counts['births'],
+             'total_valid_children':counts['valid'],
+             'raw_improving':counts['raw_improving'],'final_improving':counts['final_improving'],
+             'raw_geometric_checks':gate.raw,'compression_geometric_checks':gate.comp,
+             'total_geometric_checks':gate.raw+gate.comp,
+             'mode_births_cumulative':dict(mode_births), 'mode_record_events_cumulative':dict(mode_record_events),
+             'training_global_probabilities':ctl.probabilities(ctl.new_policy(),ctl.context(best)),
+             'elapsed_seconds':time.perf_counter()-started}
+        history.append(row)
+        append_jsonl(gen_file,row);gen_file.flush()
+        draw_mosaic(imgs/f'gen_{gen:03d}.png',pop,None)
+    with (directory/'individuals.jsonl').open('w',encoding='utf-8') as ind, \
+         (directory/'selection.jsonl').open('w',encoding='utf-8') as sel, \
+         (directory/'generations.jsonl').open('w',encoding='utf-8') as gen_file, \
+         GeometryCounter() as gate:
+        for uid,p in pop:
+            append_jsonl(ind,{'individual_id':uid,'generation':0,'origin':'imported_reward_v2_final',
+               'parent_ids':[],'valid':True,'side':p.container_side,
+               'squares':[asdict(s) for s in p.squares], 'policy':state[uid]})
+        snapshot(0,0,stagnation.mode(0))
+        for g in range(1,generations+1):
+            mode=stagnation.mode(g-1)
+            old=list(pop);children=[]
+            previous_record=best.container_side
+            for uid,parent in old:
+                for _ in range(OFFSPRING_PER_PARENT):
+                    before_raw,before_comp=gate.raw,gate.comp
+                    gate.phase='raw'
+                    parent_cap=(max(side_cap,parent.container_side+cap_margin)
+                                if side_cap_setting=='auto' else side_cap)
+                    chance=rng.random()
+                    if mode=='precision' and chance<0.55:
+                        raw,meta=propose_micro(parent,rng,parent_cap)
+                    elif mode=='escape' and chance<0.42:
+                        raw,meta=propose_reconfigure(parent,rng,parent_cap)
+                    elif mode=='diversify' and chance<0.60:
+                        raw,meta=propose_reconfigure(parent,rng,parent_cap)
+                    elif mode in ('escape','diversify') and chance<0.75:
+                        raw,meta=propose_micro(parent,rng,parent_cap)
+                    else:
+                        raw,meta=propose_learned(parent,rng,parent_cap,state[uid],ctl)
+                    used_raw=gate.raw-before_raw
+                    candidate=raw
+                    comp_gain=0.0
+                    compression_meta=None
+                    if raw is not None:
+                        gate.phase='comp'
+                        candidate,compression_meta=compress_valid(raw,rng,compressor,parent_cap)
+                        comp_gain=raw.container_side-candidate.container_side
+                    used_comp=gate.comp-before_comp
+                    mode_births[mode]+=1
+                    mode_geometry_checks[mode]+=used_raw+used_comp
+                    valid=candidate is not None and validate_packing(candidate,tolerance=0.0).valid
+                    counts['safety_checks']+=bool(candidate is not None)
+                    if valid:
+                        counts['valid']+=1
+                        mode_valid[mode]+=1
+                        children.append((nextid,candidate))
+                    if raw is not None:counts['raw_valid']+=1
+                    counts['births']+=1
+                    raw_gain=parent.container_side-raw.container_side if raw is not None else 0.0
+                    final_gain=parent.container_side-candidate.container_side if valid else 0.0
+                    if raw_gain>1e-8 and valid:
+                        counts['raw_improving']+=1; mode_direct_improving[mode]+=1
+                    if final_gain>1e-8 and valid:
+                        counts['final_improving']+=1; mode_final_improving[mode]+=1
+                    if comp_gain>1e-8 and valid:counts['comp_improving']+=1
+                    birth_actions[nextid]=meta['action'];birth_modes[nextid]=mode
+                    action_counts[meta['action']]+=1
+                    if valid:action_valid[meta['action']]+=1
+                    if valid and final_gain>1e-8:action_gain[meta['action']]+=1
+                    learned_policy,feedback=ctl.update(state[uid],meta,valid,raw_gain,comp_gain,
+                        parent.container_side,used_raw,used_comp,train=True,
+                        global_best_side=best.container_side)
+                    if valid:state[nextid]=learned_policy
+                    append_jsonl(ind,{'individual_id':nextid,'generation':g,'origin':'adaptive_v4_offspring',
+                       'parent_ids':[uid],'valid':valid,'side':candidate.container_side if valid else None,
+                       'squares':[asdict(s) for s in candidate.squares] if valid else None,
+                       'mutation':meta,'compression':{'accepted_moves':compression_meta['compression_accepted'],
+                           'side_gain':comp_gain} if compression_meta is not None else None,
+                       'feedback':feedback})
+                    nextid+=1
+            pool=old+children
+            selection_share=.60 if mode=='diversify' else .90
+            winners=select([p for uid,p in pool],n=N,fitness_share=selection_share)
+            uid_map={id(p):uid for uid,p in pool}
+            pop=[(uid_map[id(p)],p) for p in winners]
+            survivor_ids={uid for uid,p in pop}
+            new_child_ids={uid for uid,_ in children}
+            for child_uid in survivor_ids & new_child_ids:
+                operator_selected_births[birth_actions[child_uid]]+=1
+            # Selected IDs were finalized above including archive reinsertion.
+            # Independent archive: never lose the best even if diversity
+            # selection, near-duplicate filtering or ties discard its ID.
+            topid,toppack=min(pop,key=lambda row:row[1].container_side)
+            if toppack.container_side < best.container_side:
+                old_record=best.container_side
+                best_id,best=topid,toppack
+                if stagnation.reference_side-best.container_side >= stagnation.settings.significant_gain:
+                    print(f'MEANINGFUL NEW BEST gen={g} L={best.container_side:.12f} '
+                          f'gain={stagnation.reference_side-best.container_side:.9g}',flush=True)
+                else:
+                    counts['tiny_record_changes']+=1
+            if best.container_side < previous_record-1e-10:
+                improvement=previous_record-best.container_side
+                mode_record_events[mode]+=1
+                mode_record_gain[mode]+=improvement
+                if best_id in birth_actions:
+                    operator_record_events[birth_actions[best_id]]+=1
+                    operator_record_gain[birth_actions[best_id]]+=improvement
+            if best_id not in survivor_ids:
+                pop[-1]=(best_id,best)
+                survivor_ids={uid for uid,p in pop}
+            # Selection records describe the *final* archive-safe roster.
+            # Keep policy genes for the independently archived best ID.
+            state={uid:state[uid] for uid in survivor_ids}
+            for uid,p in pool:
+                append_jsonl(sel,{'generation':g,'individual_id':uid,'selected':uid in survivor_ids,
+                                  'side':p.container_side})
+            next_mode=stagnation.update(g,best.container_side)
+            if next_mode!=mode:
+                print(f'MODE_CHANGE after_gen={g} {mode}->{next_mode} '
+                      f'rolling_gain={stagnation.window_gain} slow={stagnation.weak_progress_streak}',flush=True)
+            snapshot(g,len(children),mode)
+            ind.flush();sel.flush()
+            if g % 10==0 or g==1:
+                print(f'GEN {g}/{generations} best={best.container_side:.12f} mode={mode} idle={g-stagnation.last_significant_generation} valid={counts["valid"]}/{counts["births"]} checks={gate.raw+gate.comp} elapsed={time.perf_counter()-started:.2f}',flush=True)
+    elapsed=time.perf_counter()-started
+    assert len(history)==generations+1
+    assert counts['births']==N*generations*OFFSPRING_PER_PARENT
+    assert counts['raw_valid']==counts['valid']
+    assert all(b['best_side']<=a['best_side']+1e-12 for a,b in zip(history,history[1:]))
+    assert len(list(imgs.glob('gen_*.png')))==generations+1
+    assert validate_packing(best,tolerance=0.0).valid
+    assert best.container_side<=baseline
+    # Fully validate all selected endpoint geometries outside the instrumented cost meter.
+    from shapely.geometry import Polygon,box
+    independent_max_intersection=0.0
+    independent_max_outside=0.0
+    for uid,p in pop:
+        assert validate_packing(p,tolerance=0.0).valid
+        v=geometry_check_shapely(p)
+        if v['available']:
+            independent_max_intersection=max(independent_max_intersection,v['max_overlap_area'])
+            independent_max_outside=max(independent_max_outside,v['max_outside_area'])
+    report={
+        'status':'completed','generations':generations,'population':N,'squares':n_squares,
+        'grid_baseline':known_grid.to_dict(),'side_cap':side_cap,'plot_scale':plot_scale,
+        'known_grid_injected':grid_initialized,
+        'seed':seed,'source_round':'user_supplied_population_file',
+        'source_population_sha256':sha,'source_full_population_sha256':source_full_sha,
+        'initial_parent_ids':[uid for uid,p in init_population_snapshot],
+        'parent_selection':{'source':'all imported final survivors','normal_quality':18,'normal_diversity':2,
+                            'diversify_quality':12,'diversify_diversity':8,'method':'Gerit select()'},
+        'stagnation':{**stagnation.snapshot(),'elapsed_generations':generations},
+        'mode_generations':dict(__import__('collections').Counter(row['search_mode'] for row in history[1:])),
+        'mode_proposals':dict(mode_births), 'mode_valid_children':dict(mode_valid),
+        'mode_direct_improving_children':dict(mode_direct_improving),
+        'mode_final_improving_children':dict(mode_final_improving),
+        'mode_record_events':dict(mode_record_events), 'mode_record_gain':dict(mode_record_gain),
+        'mode_geometry_checks':dict(mode_geometry_checks),
+        'operator_record_events':dict(operator_record_events),
+        'operator_record_gain':dict(operator_record_gain),
+        'operator_selected_children':dict(operator_selected_births),
+        'initial_best_side':baseline,'best_side':best.container_side,
+        'improvement':baseline-best.container_side,
+        'best_individual_id':best_id,'elapsed_seconds':elapsed,
+        'proposals':counts['births'],'valid_children':counts['valid'],
+        'invalid_children':counts['births']-counts['valid'],
+        'tiny_record_changes':counts['tiny_record_changes'],
+        'raw_improving_children':counts['raw_improving'],
+        'final_improving_children':counts['final_improving'],
+        'compression_improving_children':counts['comp_improving'],
+        'raw_geometry_checks':gate.raw,'compression_geometry_checks':gate.comp,
+        'total_geometry_checks':gate.raw+gate.comp,
+        'safety_geometry_checks':counts['safety_checks'],
+        'action_proposals':dict(action_counts),'action_valid':dict(action_valid),
+        'action_improving':dict(action_gain),
+        'controller':ctl.snapshot(),
+        'best_shapely':geometry_check_shapely(best),
+        'final_selected_max_positive_overlap_area':independent_max_intersection,
+        'final_selected_max_outside_area':independent_max_outside,
+        'population_images':len(history),
+        'warning':('Single-seed experimental algorithm; global optimality not guaranteed. '+
+                   ('EXPLICIT KNOWN GRID INITIALIZATION: do not credit the grid baseline to evolutionary discovery.'
+                    if grid_initialized else 'No known grid injected; continuation of inherited population.')+
+                   ' Cross-seed matched-check comparisons required.')}
+    (directory/'run_summary.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+    (directory/'mode_metrics.json').write_text(json.dumps({key:report[key] for key in (
+        'mode_generations','mode_proposals','mode_valid_children','mode_direct_improving_children',
+        'mode_final_improving_children','mode_record_events','mode_record_gain',
+        'mode_geometry_checks','operator_record_events','operator_record_gain','operator_selected_children')},
+        indent=2,ensure_ascii=False),encoding='utf-8')
+    (directory/'best_result.json').write_text(json.dumps({'individual_id':best_id,'side':best.container_side,
+       'squares':[asdict(s) for s in best.squares]},indent=2),encoding='utf-8')
+    (directory/'selected_population_final.json').write_text(json.dumps({
+        'generation':generations,'selected_members':[{'individual_id':uid,
+           'container_side':p.container_side,'squares':[asdict(s) for s in p.squares],
+           'policy':state[uid]} for uid,p in pop],
+        'global_policy':ctl.global_policy,
+        'adaptive_controller':{'reward_baselines':ctl.baseline_by_context},
+        'stagnation_state':{**stagnation.snapshot(),'elapsed_generations':generations}
+    },indent=2),encoding='utf-8')
+    with (directory/'generations.csv').open('w',newline='') as f:
+        cols=['generation','best_side','population_best','valid_children','total_births','total_valid_children',
+              'raw_improving','final_improving','search_mode','stagnation_generations','rolling_window_gain','rolling_weak_streak','raw_geometric_checks','compression_geometric_checks',
+              'total_geometric_checks','elapsed_seconds']
+        writer=csv.DictWriter(f,fieldnames=cols);writer.writeheader()
+        writer.writerows([{k:row.get(k) for k in cols} for row in history])
+    draw_best(directory/'best.png',best)
+    (directory/'start.png').write_bytes((imgs/'gen_000.png').read_bytes())
+    (directory/'middle.png').write_bytes((imgs/f'gen_{generations//2:03d}.png').read_bytes())
+    (directory/'final.png').write_bytes((imgs/f'gen_{generations:03d}.png').read_bytes())
+    draw_progress(directory/'progress.png',history,grid_reference_side=known_grid.grid_upper_side)
+    with (directory/'REPRODUCE.md').open('w',encoding='utf-8') as f:
+        f.write(f'''# Gerit adaptive reward-v4: {n_squares} unit squares, 20 parents, {generations} full generations
+
+## Input and exact protocol
+* Read 20 last selected members (with learned policies) from `{source_file}`; SHA-256 of complete source: `{source_full_sha}`.
+* Inherit **all 20 imported survivors unchanged**, retaining genuine IDs and associated policy genes; apply **18 quality + 2 diversity selection** in each subsequent generation.
+* Initial 20 selected snapshot and SHA-256: `{sha}` (see `input_selected_population.json`).
+* Import both individual and global learned policies. Recenter legacy saturated logits (all -5 or +5) to zero while preserving relative differences.
+* Seed: `{seed}`; 18 quality + 2 diversity survivors; **{OFFSPRING_PER_PARENT}** child proposals per parent (100 each generation).
+* Movement: 10 probabilistic motion families; inherited directional/size learned weights plus global learned probabilities.
+* Reward: v2 direct/compression/cost accounting drives v3 relative-advantage centered online policy updates; no all-negative-logit collapse.
+* Local compressor: up to 35 trials per valid raw child.
+* Births {counts['births']}; valid {counts['valid']}; invalid {counts['births']-counts['valid']}.
+* Internal validation calls: {gate.raw} raw + {gate.comp} local compression; another {counts['safety_checks']} final safety checks separate.
+* {generations+1} real PNG snapshots with **20** individuals each (gen_000 through gen_{generations:03d}).
+* Independent Shapely checks on all final 20 survivors: maximum overlap {independent_max_intersection}, maximum outside area {independent_max_outside}.
+* The constructive grid benchmark for n={n_squares} has side L={known_grid.grid_upper_side}, while area alone implies lower L>={known_grid.area_lower_side:.9f}.
+* Focused search acceptance cap={side_cap:.9f} is not the imported parent side. With automatic mode each diverse parent is allowed its own side + {cap_margin} exploration. Each picture tile shows the packing's actual side.
+* The known grid is NOT imported unless the input file was explicitly generated from the grid initializer.
+* This continuation alone does not prove reward-v2's causal advantage over frozen weights.
+
+## Files
+* `individuals.jsonl`: {N} imported parents plus {counts['births']} attempted offspring with lineage and learning feedback.
+* `selection.jsonl`: all selection decisions across {generations} generations.
+* `generations.jsonl`, `generations.csv`: generation history and evaluation costs.
+* `selected_population_final.json`: 20 genuinely selected genomes **with inherited policy weights**.
+* `run_summary.json`, `best_result.json`, `verification.json`: measured outcomes and validation.
+* `source_code/`: local copy of code (does not include the whole Git history).
+''')
+    deps=[Path(__file__),BASE/'gerit'/'adaptive_v4.py',BASE/'gerit'/'grid_bounds.py',BASE/'gerit'/'geometry.py',BASE/'gerit'/'selection.py',
+          BASE/'gerit'/'learning.py',BASE/'gerit'/'local_compression.py',
+          BASE/'gerit'/'reward_v2.py',BASE/'gerit'/'adaptive_v3.py',BASE/'gerit'/'visualization.py']
+    for path in deps:
+        shutil.copyfile(path,source_code/path.name)
+    verification=verify_run(directory,report)
+    (directory/'verification.json').write_text(json.dumps(verification,indent=2,ensure_ascii=False),encoding='utf-8')
+    if make_zip:
+        full_zip=directory/'complete.zip'
+        images_zip=directory/'generation_images.zip'
+        with zipfile.ZipFile(images_zip,'w',compression=zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(imgs.glob('gen_*.png')):
+                z.write(p,arcname='generation_images/'+p.name)
+        with zipfile.ZipFile(full_zip,'w',compression=zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(directory.rglob('*')):
+                if p.is_file() and p not in (full_zip,images_zip):
+                    z.write(p,p.relative_to(directory))
+        for p in (images_zip,full_zip):
+            with zipfile.ZipFile(p) as z:
+                if z.testzip() is not None: raise RuntimeError('ZIP corruption: '+str(p))
+        print(f'Complete archive: {full_zip}', flush=True)
+        print(f'Generation images ZIP: {images_zip}', flush=True)
+    return report
+
+def verify_run(directory,report):
+    def readj(name):
+        with (directory/name).open(encoding='utf-8') as f:return [json.loads(x) for x in f if x.strip()]
+    rows=readj('generations.jsonl')
+    inds=readj('individuals.jsonl')
+    sels=readj('selection.jsonl')
+    final=json.loads((directory/'selected_population_final.json').read_text())
+    gids={r['individual_id'] for r in inds}
+    assert len(rows)==report['generations']+1
+    assert len(inds)==N+report['proposals']
+    assert all((len(r['selected_ids'])==N) for r in rows)
+    assert [r['generation'] for r in rows]==list(range(report['generations']+1))
+    assert len(list((directory/'generation_images').glob('gen_*.png')))==len(rows)
+    assert len(final['selected_members'])==N
+    for r in inds:
+        if r['generation']>0:
+            assert len(r['parent_ids'])==1 and r['parent_ids'][0] in gids
+            assert r['parent_ids'][0]<r['individual_id']
+        if r['valid']:
+            p=Packing(tuple(Square(**sq) for sq in r['squares']),r['side'])
+            assert validate_packing(p,tolerance=0.0).valid
+    assert len(sels)==report['generations']*N+report['valid_children']
+    assert report['final_selected_max_positive_overlap_area']<=1e-12
+    assert report['final_selected_max_outside_area']<=1e-12
+    assert sum(report['mode_proposals'].values()) == report['proposals']
+    assert sum(report['mode_valid_children'].values()) == report['valid_children']
+    assert sum(report['mode_geometry_checks'].values()) == report['total_geometry_checks']
+    assert sum(report['mode_generations'].values()) == report['generations']
+    assert sum(report['mode_record_events'].values()) <= report['generations']
+    return {'status':'verified','generation_records':len(rows),'individual_records':len(inds),
+            'selection_records':len(sels),'image_count':len(rows),'selected_final':N,
+            'positive_shapely_overlap_area_max':report['final_selected_max_positive_overlap_area'],
+            'out_of_bounds_area_max':report['final_selected_max_outside_area'],
+            'raw_checks':report['raw_geometry_checks'],
+            'compression_checks':report['compression_geometry_checks']}
+
+if __name__=='__main__':
+    ap=argparse.ArgumentParser()
+    ap.add_argument('--input',type=Path,default=SOURCE,help='Previous selected_population_final.json (with policy weights)')
+    ap.add_argument('--generations',type=int,default=100)
+    ap.add_argument('--seed',type=int,default=DEFAULT_SEED)
+    ap.add_argument('--output-dir',type=Path,default=DEFAULT_RUN)
+    ap.add_argument('--no-zip',action='store_true')
+    ap.add_argument('--side-cap',default='auto',help='auto (n-aware + per-parent allowance, default) or explicit positive number e.g. 5')
+    ap.add_argument('--cap-margin',type=float,default=0.15,help='extra exploration above max(grid bound, imported worst side), default 0.15')
+    ap.add_argument('--precision-after',type=int,default=40)
+    ap.add_argument('--escape-after',type=int,default=80)
+    ap.add_argument('--diversify-after',type=int,default=120)
+    ap.add_argument('--significant-gain',type=float,default=1e-6)
+    ap.add_argument('--window-generations',type=int,default=80)
+    ap.add_argument('--min-window-gain',type=float,default=1e-4)
+    ap.add_argument('--slow-precision-after',type=int,default=1)
+    ap.add_argument('--slow-escape-after',type=int,default=20)
+    ap.add_argument('--slow-diversify-after',type=int,default=60)
+    args=ap.parse_args()
+    settings=StagnationSettings(args.precision_after,args.escape_after,
+                                args.diversify_after,args.significant_gain)
+    window_settings=WindowSettings(args.window_generations,args.min_window_gain,
+                                   args.slow_precision_after,args.slow_escape_after,
+                                   args.slow_diversify_after)
+    print(json.dumps(run(args.generations,args.seed,args.output_dir,not args.no_zip,args.input,
+                         settings,window_settings,args.side_cap,args.cap_margin),indent=2))
