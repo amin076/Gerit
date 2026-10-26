@@ -1,3 +1,79 @@
+# Gerit — Adaptive v3 (stagnation escape + relative learning)
+
+**Current recommended command for the completed `round18` experiment on your Windows PC:**
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m pip install -r requirements.txt
+py -3 -m unittest discover -s tests -v
+py -3 scripts/run_adaptive.py --input results/round18/selected_population_final.json --generations 300 --seed 2609 --output-dir results/round19-adaptive
+```
+
+The round18 result is on **your** machine, not in the GitHub repository. Do not
+copy it back into the repository: `--input` reads it in place, preserving all
+20 final geometries and per-parent learned policies. The archived starting best
+reported from your round18 terminal is `L=4.005430701105233` (verify that the
+actual JSON is the expected file). If you do not have that file, omit `--input`
+to start from the bundled Round15 survivors instead.
+
+**What is new in v3:**
+
+1. `gerit/adaptive_v3.py` uses the version-2 **separate** raw-mutation reward,
+   local-compression reward and SAT cost, but updates action probabilities by
+   **relative advantage** versus an exponential moving baseline. It centers
+   family, step-size and directional logits rather than clipping all families
+   to `-5`. The import migrator centers previously saturated v2 genes to
+   neutral without creating artificial preferences for newly added operators.
+   It also gives limited extra credit for children competitive with the best
+   known packing and for genuine global records.
+2. Automatic **mode switching** after generations with no meaningful global
+   best improvement (default threshold `1e-6` in side `L`):
+   - `normal` (0–39 idle generations): original 10 learned operator families;
+     selection **18 quality / 2 diversity**.
+   - `precision` (40–79): 55% of proposed births use very fine movements
+     (`1e-8` to `0.004`), the rest the learned standard operators.
+   - `escape` (80–119): 42% multi-square structural relocations, 33% micro
+     movements, the rest standard learned operators.
+   - `diversify` (120+): 60% multi-square relocations, 15% micro movements,
+     the rest standard operators; temporarily select **12 quality / 8 diversity**.
+   A sufficiently large new best resets the idle counter. Modes/transition
+   history are recorded in outputs, and the idle counter is inherited when
+   continuing a previous v3 run.
+3. The best valid solution has an **independent non-regressing archive**, even
+   when exploratory selection changes. Structural attempts may disrupt a
+   packing, but invalid geometry is **never** admitted as a valid child. No
+   known 4×3 grid placement is secretly inserted: `L=4` is a separate known
+   baseline, not an evolved result.
+4. Original `scripts/run_continuation.py` is intentionally unchanged as the
+   **v2 control** for fair comparisons. `scripts/run_adaptive.py` is the new
+   v3 experiment. Prior v2 output files remain readable as inputs.
+
+Options (all optional):
+
+```powershell
+py -3 scripts/run_adaptive.py --help
+py -3 scripts/run_adaptive.py --input results/round18/selected_population_final.json --generations 300 --seed 2610 --output-dir results/round19-refine --precision-after 40 --escape-after 80 --diversify-after 120 --significant-gain 0.000001
+```
+
+For a **four-generation smoke test** that forces each escape phase to be
+exercised, use new thresholds on a disposable result folder:
+
+```powershell
+py -3 scripts/run_adaptive.py --input results/round18/selected_population_final.json --generations 4 --seed 2701 --output-dir results/adaptive-smoke --precision-after 1 --escape-after 2 --diversify-after 3 --significant-gain 100
+```
+
+This is a behavior test, **not** a promise that adaptive v3 outperforms v2.
+To establish improvement, compare multiple seeds at equal internal geometry
+check budgets (not just equal numbers of child proposals); the structural
+operator can be more expensive. Every run writes `generation_images.zip`,
+`complete.zip`, and `selected_population_final.json`. Source outputs and
+previous experimental archives are preserved.
+
+---
+
+## Earlier v2 local workflow (still supported for controlled comparisons)
+
 # Gerit — evolutionary packing of rigid unit squares
 
 Gerit searches for valid arrangements of rotatable, **unit-size squares** inside
