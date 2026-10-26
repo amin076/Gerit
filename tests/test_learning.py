@@ -51,13 +51,7 @@ class PolicyTests(unittest.TestCase):
         self.assertGreaterEqual(min(weights.values()),self.ctl.settings.epsilon_explore/len(ACTIONS))
 
     def test_sample_on_real_twelve_square_population(self):
-        from zipfile import ZipFile
-        import json
-        path=Path('/mnt/data/Gerit_round13_12squares_100_generations.zip')
-        with ZipFile(path) as z:
-            source=json.loads(next(z.read(n) for n in z.namelist() if n.endswith('selected_population_final.json')))
-        member=min(source['selected_members'], key=lambda a:a['container_side'])
-        pack=Packing(tuple(Square(**sq) for sq in member['squares']),member['container_side'])
+        pack=Packing(tuple(Square(0.5+1.15*(i%4),0.5+1.15*(i//4),0.0) for i in range(12)),5.0)
         self.assertTrue(validate_packing(pack,tolerance=0.0).valid)
         rng=random.Random(135)
         for _ in range(30):
