@@ -1,463 +1,141 @@
-# Gerit
+# Gerit — evolutionary packing of rigid unit squares
 
-**Gerit** is a Python-first research project for evolutionary optimization of the **Squares in Squares** packing problem.
+Gerit searches for valid arrangements of rotatable, **unit-size squares** inside
+an axis-aligned square container. The score is the enclosing side length `L`
+(or, equivalently, its area `L²`). No overlapping interiors are permitted.
 
-> **Status: Phase 1 — initial rigid-square geometry implemented.** A dependency-free geometry validator, grid baselines and unit tests are committed. A first seeded evolutionary solver is now implemented. A second independent validation backend has **not** been implemented. No optimization results are claimed.
+**Current local workflow:** continue the real 12-square experiment from the
+**20 selected parents at the end of Round 15**, preserving the learned
+per-parent mutation policies **and** the shared global policy. The bundled
+`data/round15_selected_population_final.json` starts with best side
+`4.006477636998101`. A simple 4-by-3 grid has `L = 4`; the evolutionary
+record does not beat that baseline, and no global-optimality claim is made.
 
-## هدف پروژه (خلاصه فارسی)
+## اجرای سریع روی ویندوز / Windows quick start
 
-هدف «Gerit» پیدا کردن چیدمان‌های معتبر و هرچه فشرده‌تر برای `n` مربع واحد داخل یک قاب مربعی است. هیچ دو مربع نباید هم‌پوشانی داخلی داشته باشند و هیچ مربعی نباید از قاب بیرون بزند. مربع‌ها اجازه چرخش دارند. هدف کمینه‌کردن ضلع قاب و در نتیجه مساحت و فضای خالی است.
+پیش‌نیاز: **Python 3.11 یا 3.12** (نسخه‌های جدیدتر سازگار نیز معمولاً کار می‌کنند)،
+`git` و دسترسی به اینترنت برای نصب بسته‌ها. دستورات زیر را در **PowerShell** یا
+**Command Prompt** وارد کنید:
 
-رویکرد اولیه پروژه یک **جست‌وجوی تکاملی مبتنی بر جمعیت** است: تولید چیدمان‌های معتبر، ارزیابی هندسی، جهش و بازآرایی، انتخاب والدها، نگهداری بهترین جواب‌های معتبر و تکرار نسل‌ها. این رویکرد از ایده‌های پژوهشی [Melakat](https://github.com/amin076/melakat) و چرخه جمعیت/اعتبارسنجی [Siperisk](https://github.com/amin076/siperisk) الهام می‌گیرد، اما یک حل‌گر هندسی جدید لازم دارد. نتیجه بهتر در هر نسل تضمین نمی‌شود؛ فقط با نگهداری نخبگان، بهترین نتیجه ثبت‌شده بدتر نخواهد شد.
+```powershell
+git clone https://github.com/amin076/Gerit.git
+cd Gerit
+py -3 -m pip install -r requirements.txt
+py -3 scripts/run_continuation.py --generations 100 --seed 2607 --output-dir results/round16
+```
 
-## Problem definition
+`venv` اجباری نیست. با این حال برای اینکه نسخهٔ بسته‌ها با برنامه‌های Python
+دیگر تداخل پیدا نکند، محیط مجازی پیشنهاد می‌شود. اگر از قبل Pillow نصب
+کرده‌اید باز هم `pip install -r requirements.txt` را اجرا کنید؛ **Matplotlib**
+برای نمودار و **Shapely** برای ممیزی مستقل هندسه لازم‌اند. وابستگی‌های غیرمستقیم
+مانند NumPy را خود `pip` نصب می‌کند.
 
-Given `n` closed unit squares, find translations `(x_i, y_i)`, rotations `theta_i`, and the smallest axis-aligned square container with side length `L` such that:
+اگر دستور `py` روی سیستم شما شناسایی نشد، به‌جای `py -3` از `python` استفاده
+کنید. برای بررسی نصب:
 
-1. Every unit square lies completely within `[0,L] × [0,L]`.
-2. The **interiors** of any two unit squares are disjoint. Boundary contact is allowed.
-3. The objective is to minimize `L`, equivalently `L²` or unused area `L² - n`.
+```powershell
+py -3 -c "import PIL, matplotlib, shapely; print('Dependencies OK')"
+py -3 -m unittest discover -s tests -v
+```
 
-For an illustrative first experiment, use **n = 17**, starting with a valid axis-aligned placement inside a **5 × 5** container (`L = 5`, area `25`, unused area `8`). A second benchmark is **n = 11** (`L = 4` grid baseline). These are baselines, not solutions claimed to be optimal.
+### اول یک اجرای کوتاه آزمایشی انجام دهید
 
-An accepted result must include the container side length and all `n` square centers and angles, plus independently checked geometric validity. A smaller reported `L` is **not** an improvement if any square overlaps or crosses the container boundary.
+```powershell
+py -3 scripts/run_continuation.py --generations 1 --seed 2607 --output-dir results/test1
+```
 
-## Initial research hypothesis
+بعد از موفقیت تست کوتاه، دستور ۱۰۰نسلی بالا را اجرا کنید. اجرای آزمایش
+در همان ترمینال گزارش نسل‌ها و رکوردهای جدید را نشان می‌دهد؛ مدت اجرا با
+مشخصات CPU و وضعیت سیستم متغیر است.
 
-Can a population of valid square packings, evolved through collision-aware mutations, selection and diversity preservation, discover smaller valid containers than simple grid baselines?
+### خروجی‌ها کجا ذخیره می‌شوند؟
 
-We will compare two families under the **same budget of geometric evaluations**:
+هر اجرا پوشهٔ جداگانه‌ای می‌سازد؛ برای مثال `results/round16/` شامل موارد زیر است:
 
-- **Baseline search:** independent random restarts and local geometric improvement without a population-based resource economy.
-- **Evolutionary search:** a population of placements, parent selection, geometrically valid mutation/repair, elite retention, and diversity-preserving exploration.
+| File / directory | Description |
+| --- | --- |
+| `generation_images/gen_000.png` ... `gen_100.png` | 101 actual population snapshots, each with 20 packings |
+| `generation_images.zip` | Downloadable ZIP containing all generation images |
+| `complete.zip` | Full auditable run output (images, logs, snapshots and source copies) |
+| `best.png`, `progress.png`, `start.png`, `middle.png`, `final.png` | Overview graphics |
+| `selected_population_final.json` | **All 20 surviving parents plus each learned policy and global policy** |
+| `run_summary.json`, `best_result.json`, `verification.json` | Metrics, best result, validation status |
+| `individuals.jsonl`, `selection.jsonl`, `generations.jsonl`, `generations.csv` | Proposals, ancestry, selections, progress and costs |
+| `config.json`, `input_selected_population.json`, `source_code/` | Reproducibility information |
 
-A later optional experiment may adapt Melakat-inspired scarce computational resources: evaluation budgets allotted to candidate lineages, with resource accounting. This is a **testable experimental variant**, not an assumed improvement.
+**Do not delete `selected_population_final.json`**: that is the exact population
+and learned memory needed for the next experiment.
 
-## Proposed evolutionary cycle
+### ادامه از آخرین نسل / Continue from the last saved population
 
-1. **Initialize.** Construct multiple independently randomized, valid placements; include a simple grid baseline as a control.
-2. **Represent.** One individual is a full packing: container length `L` and `n` rigid-square poses `(x, y, theta)`.
-3. **Mutate.** Try translations, rotations, moves of groups, partial repacking and occasional large perturbations. In strict-validity mode, reject any invalid candidate; no invalid state enters the breeding population.
-4. **Validate.** Use a robust geometric test for square/container boundaries and square/square interior intersection (e.g. a separating-axis test), with a documented floating-point tolerance policy. An independent validator rechecks promoted records.
-5. **Improve.** Attempt to reduce `L`; local moves may be accepted for exploration even if they do not immediately improve the global record.
-6. **Select.** Keep an elite archive of the best validated packing(s), plus diverse viable individuals. Avoid premature convergence to one arrangement.
-7. **Repeat.** Save deterministic seeds, lineages, candidates, costs and improvements; stop at a declared evaluation/time budget.
+```powershell
+py -3 scripts/run_continuation.py --input results/round16/selected_population_final.json --generations 100 --seed 2608 --output-dir results/round17
+```
 
-**Invariant:** `best_valid_L(t+1) <= best_valid_L(t)` if the elite archive is retained. This guarantees non-regression of the **record**, not improvement in every generation or global optimality.
+Repeat with the new output file, a new seed and a new output directory.
+An existing output folder triggers an error rather than being overwritten.
+The `--input` argument accepts any compatible 20-member
+`selected_population_final.json` file **with individual `policy` fields and
+`global_policy`**. The initial parents are imported unchanged. Each produces
+5 proposals per generation (100 candidate proposals/generation). Selection
+retains 18 by packing quality and 2 by structural diversity.
 
-### Important engineering distinction
+### Optional: isolated Python installation
 
-A *valid arrangement* is not the same thing as a *continuous collision-free physical animation*. A solver may propose a move whose start and destination are valid without asserting that the straight-line path between them is physically feasible. A future physical-motion mode would require swept collision detection or path planning. Visualizations must accurately label whether they show proposal/acceptance events or actual collision-free trajectories.
+An environment is recommended but **not mandatory**. On Windows:
 
-## Planned Python architecture
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe scripts/run_continuation.py --generations 100 --output-dir results/round16-venv
+```
+
+On macOS/Linux, use `python3 -m pip install -r requirements.txt`, then
+`python3 scripts/run_continuation.py --generations 100 --output-dir results/round16`.
+
+## Algorithm and reproducibility
+
+- Rigid squares are validated using separating-axis checks. Saved images
+  represent accepted packing **states**, not collision-free physical
+  trajectories between them.
+- `gerit/learning.py` samples from ten directional mutation families with
+  continuous angle/translation steps. Each parent has a policy genome;
+  offspring inherit it. Population-level probabilities are also updated.
+- `gerit/reward_v2.py` distinguishes improvement caused directly by mutation,
+  additional improvement caused by local compression, and measured counts of
+  geometric validation calls.
+- Every valid raw child is locally compressed with
+  `gerit/local_compression.py`, then selected using 90% fitness / 10% diversity.
+- Each run uses a declared RNG seed, append-only JSONL lineage and selected
+  population snapshots. Final survivors are checked with Shapely in addition
+  to the primary geometric validator.
+- `--generations 100` means 100 **new** evolutionary generations; generation 0
+  is the imported population, so 101 images are expected.
+- The standard `python -m gerit --config configs/five-squares.json` CLI is the
+  **earlier baseline motor**. `python -m gerit --learning` uses the original
+  learning credit rule, **not** the cost-aware v2 continuation. For current
+  12-square experiments use `scripts/run_continuation.py`.
+
+## Python entry points and layout
 
 ```text
-gerit/
-  __init__.py
-  geometry.py        # rotated unit squares, container checks, independent validity
-  packing.py         # immutable individuals, serialization, canonical metrics
-  initialization.py  # valid grid and randomized starting populations
-  operators.py       # translation, rotation, group moves, repair/repacking
-  evolution.py       # populations, selection, elite archive, diversity
-  experiments.py     # fixed-seed campaigns and equal-budget comparisons
-  cli.py             # reproducible command-line runner
-tests/
-  test_geometry.py   # contacts, overlaps, rotations, out-of-bounds, tolerances
-  test_evolution.py  # no-invalid-individual and elite non-regression properties
-results/              # generated reports; not ground truth by itself
+Gerit/
+  README.md
+  requirements.txt
+  data/round15_selected_population_final.json
+  gerit/
+    geometry.py
+    selection.py
+    learning.py
+    reward_v2.py
+    local_compression.py
+    visualization.py
+  scripts/run_continuation.py
+  tests/test_continuation_cli.py
+  results/                  # created locally; do not commit run outputs
 ```
 
-This layout is a **proposal**, not a claim that these files already exist. Initial implementation targets Python 3.12+, using the standard library where practical. Dependencies will be justified as they are introduced.
-
-## Scientific and engineering principles
-
-- **Validity before scores:** infeasible packings cannot win or silently enter the elite archive.
-- **Rigid squares:** placement geometry uses unchanged unit side lengths; no scaling or deformation.
-- **Report real metrics:** record `n`, `L`, `L²`, unused area `L²-n`, seed, evaluation count, runtime, validity and best-so-far history.
-- **No fabricated progress:** percentages indicate consumed search budget, never presumed convergence or optimality.
-- **Diversity is measurable:** include geometric/structural diversity metrics rather than rewarding arbitrary differences.
-- **Reproducibility:** versioned configuration, fixed RNG seeds, output hashes and independent verification; retain unsuccessful runs.
-- **Fair comparisons:** compare against simple baselines at matched evaluation budgets and multiple seeds; report distributions, not cherry-picked runs.
-- **No novelty claims without evidence:** matching a known packing is reproduction; beating a documented bound requires careful independent checking and provenance.
-- **No changes to source projects:** Melakat and Siperisk remain separate; any reused code requires explicit attribution, license preservation and appropriate tests.
-
-## Milestones
-
-- **M0 — Specification (current):** document goal, constraints, baselines, acceptance criteria and architecture.
-- **M1 — Geometry & verification (initial implementation complete):** unit-square geometry, SAT collision detection, container boundaries, bounding-square metrics, tests and valid grid baselines. Additional independent high-precision validation remains future work.
-- **M2 — Non-evolutionary control:** deterministic random-restart/local-search benchmark for n=11 and n=17.
-- **M3 — Evolutionary prototype (implemented as an experimental baseline):** seeded population, subset relocation/rotation, strict destination validity, fitness/diversity selection, elitism and JSON generation histories. Results and performance must still be benchmarked.
-- **M4 — Comparative experiments:** matched-seed, matched-budget evaluation against M2; independently validate archived best candidates.
-- **M5 — Melakat-inspired budget policy:** optional energy/resource-allocation experiment with ablation controls.
-- **M6 — Visualization & Kaggle adapter:** replay actual algorithm events and, after checking official competition rules/format, add a compatible submission exporter.
-
-## Acceptance criteria for a first genuine improvement
-
-For n=17, an example milestone is finding a **validated** packing with `L < 5`. The run must include coordinates, angles, a reproducible seed, a documented number of objective evaluations, and a second validator's report. We will not call this a global optimum.
-
-## Related research and inspiration
-
-- [Melakat](https://github.com/amin076/melakat): digital organisms, bounded energy/memory, reproduction, mutation, genealogy, deterministic experiments. Melakat deliberately avoids an explicit externally rewarded fitness function; Gerit deliberately has one.
-- [Siperisk](https://github.com/amin076/siperisk): verified candidate admission, inter-generation population selection, evidence ledger, and provenance. Its mathematical verification mechanisms are **not** directly a geometric packing solver.
-- [Gareen](https://github.com/amin076/gareen): formal mathematical research tooling; potential future role in formalizing selected geometric claims, not required for initial numeric optimization.
-- [Kaggle — Squares in Squares](https://www.kaggle.com/competitions/squares-in-squares): motivating competition. Official rules, evaluation and submission requirements must be checked before competition-specific integration.
-
-## License
-
-No license is declared by this README. Before copying implementation code from other projects, review the applicable licenses and attribution requirements.
-
----
-
-Gerit begins as a **research experiment**, not as a claim that evolutionary search necessarily outperforms established square-packing methods. The first priority is a trustworthy geometric validator and an honestly measured baseline.
-
-
-## Configurable experiments (scaffold implemented)
-
-Parameters are **not hard-coded into the evolutionary engine**. The first Python configuration/CLI scaffold is committed under `gerit/config.py`, `gerit/__main__.py`, and `configs/five-squares.json`. It **validates and previews** an experiment; it does **not** yet run evolution or validate geometry.
-
-Run a configuration preview:
-
-```bash
-python -m gerit --config configs/five-squares.json --dry-run
-python -m unittest discover -s tests -v
-```
-
-Example configuration:
-
-```json
-{
-  "schema_version": "gerit-run-config-0.1",
-  "n_squares": 5,
-  "initial_population": 20,
-  "next_generation_population": 20,
-  "offspring_per_parent": 5,
-  "selection_groups": [
-    {"method": "fitness", "share": 0.75},
-    {"method": "diversity", "share": 0.25}
-  ],
-  "initialization_source": "grid_mutations",
-  "initial_container_side": 3.0,
-  "diversity_metric": "center_distances_angles",
-  "seed": 17,
-  "max_generations": 100,
-  "max_evaluations": 100000
-}
-```
-
-- `initial_population` means the number of initial parents and may differ from `next_generation_population`, the number retained after selection. `offspring_per_parent` is independent of both.
-- Selection quotas are allocated by the **largest-remainder** rounding rule, so they always sum to the desired next-generation size even for totals like 30 (75%/25% becomes 23/7).
-- Current registered selection groups are `fitness` (smallest **validated** enclosing-square side) and `diversity` (maximize distance from already selected layouts subject to validity and a defined quality ceiling). The concrete selection engine and distance function are **not implemented yet**.
-- The selection-group schema is extensible (`method`, `share`, `options`). A future third method such as `novelty` can be added by **implementing and registering** it; unknown methods currently raise a clear error rather than silently pretending to execute.
-- Initialization sources are `grid_mutations`, `random_valid`, `file`, and `agent`. The `file` mode requires an `initialization_file` path; `agent` requires an `agent_adapter`. These are **declared future adapters**, not yet runnable generators.
-- Human-drawn layouts should enter through a separate user-interface/coordinate-conversion adapter and use the same file schema and independent geometry checker as generated layouts. Agent-generated layouts are untrusted proposals and require validation; neither visual resemblance nor an agent assertion is proof of feasibility.
-- Seed, generation/evaluation budgets and the diversity metric are explicit to support fair tests. More computational controls (workers, CPU/GPU backend, wall-time) may be added as versioned fields when execution backends exist.
-
-**Research design:** compare grid-only, randomized valid initial populations, and later optional agent/human-proposed seed populations under the same evaluation budget. Do not assume agents produce higher-quality initial placements without measured evidence.
-
-
-## Phase 1 — geometry (implemented)
-
-The initial numerical geometry core is dependency-free (Python 3.12+).
-
-- `gerit/geometry.py`: immutable `Square(x, y, angle)` (angle **in radians**, side length always 1), `Packing`, `ValidationResult`.
-- `square_vertices(square)`: rotated unit-square vertices.
-- `squares_overlap(a,b,tolerance=1e-10)`: separating-axis test (SAT) for interior overlap; boundary contact is allowed.
-- `square_inside_container(square, side)`: corners constrained to `[0,side]^2`.
-- `validate_packing(packing)`: indices of overlapping pairs and out-of-bounds squares.
-- `minimum_bounding_square(squares)`: rebase a **fixed** arrangement into a tight axis-aligned square envelope; this does not optimize/rearrange or repair collisions.
-- `unused_area(packing)`: `L²-n` for valid packings; rejects invalid geometry.
-- `grid_baseline(n)`: exact row-major grid initial condition (n=5 → 3×3, n=17 → 5×5).
-- `tests/test_geometry.py`: numerical geometry regression tests.
-
-Quick check:
-
-```bash
-python -m unittest discover -s tests -v
-python - <<'PY'
-from gerit.geometry import grid_baseline, validate_packing, unused_area
-packing = grid_baseline(5)
-print(packing.container_side, validate_packing(packing).valid, unused_area(packing))
-# 3.0 True 4.0
-PY
-```
-
-### Numerical precision boundary
-
-The default SAT tolerance is `1e-10`. Penetrations no larger than this tolerance **may be classified as contact**; likewise, boundary overruns up to tolerance may be accepted. This is an explicit approximate numerical policy, **not an exact proof of feasibility**. Before claiming a record or submitting to a competition, revalidate with a separate higher-precision or certified geometry implementation and an appropriate safety margin. The proposed independent `Shapely`/GEOS-based checker is a future milestone and is not claimed implemented.
-
-The core validates snapshots of rigid squares, not their swept collision-free physical motion. Any evolution or visualization must distinguish accepted destination states from actual trajectories.
-
-### Implementation status
-
-Phase 1 geometry was exercised against eight local checks before GitHub upload (valid grids, rotated unit edges, legal contact, overlap, out-of-bounds, tight bounding square, unrepaired overlaps and invalid inputs). CI in the repository has not yet independently confirmed them. The evolutionary engine is still pending.
-
-
-## Phase 3 — executable evolutionary motor (experimental)
-
-The first **actual evolutionary search** is implemented in `gerit/evolution.py` and invoked by `python -m gerit`. It makes real geometric proposals and runs the Phase 1 collision validator; progress is **not animated, precomputed, or guaranteed**.
-
-Run from repository root:
-
-```bash
-python -m unittest discover -s tests -v
-python -m gerit --config configs/five-squares.json --dry-run
-python -m gerit --config configs/five-squares.json --output results/five-squares-latest.json
-```
-
-Outputs include valid best-known packing coordinates and angles in **radians**, its measured side/area/unused area, exact run configuration, numeric-validation status, evaluations consumed, accepted children, and each generation's best-so-far value.
-
-The current evolutionary baseline:
-- Starts with an axis-aligned valid grid packing and generates initial variations by random validated relocations/rotations.
-- Mutates a randomly selected subset (sometimes the entire configuration). Candidate partial placements and completed offspring must pass rigid-square SAT validation at numeric tolerance **zero**. A proposed displacement is **not** asserted to have a physically traversable collision-free path.
-- Scores a feasible offspring by the axis-aligned tight enclosing square `L`; retaining all parents before selection guarantees preservation of the best observed valid result.
-- Selects configured fitness elites, plus a farthest-first diversity allocation based on unlabeled center distances and relative angle signatures.
-- Enforces configured evaluation and generation limits and records best-so-far history.
-- Retains validity but not necessarily distinctness when too few unique survivors exist; duplicates may be carried to fill the configured population.
-- Does **not** implement GPU/CPU worker parallelism, human drawing, agent/file initialization, crossovers, physical motion constraints, or a global optimum proof. `file` and `agent` initialization fail explicitly rather than silently using substitute parents.
-
-**Important performance caveat:** this first baseline uses rejection sampling for random repositioning, which can become extremely inefficient for densely packed solutions. It is a real search implementation but has not been shown to reach the known optimal five-square packing. Contact patterns and group rearrangement operators will be refined after measurement. The approximate diversity proxy does not perfectly identify every rotationally equivalent configuration.
-
-**Reproducibility / validity:** seeded deterministic random search is covered by regression tests in `tests/test_evolution.py`. Initial feasibility is checked numerically with zero SAT penetration tolerance, but floating-point arithmetic is not a certified proof. Independently verify any claimed result before submitting or publishing.
-
-### Development notes
-
-The initial strategy uses `grid_mutations` and `random_valid` initialization modes. The latter means independently mutated, strictly valid configurations from the grid control — **not** mathematically uniform sampling from all feasible packings. Repeated identical individuals may be present if the budget is exhausted or valid distinct candidates cannot be generated. The selection shares use the versioned configuration already documented above.
-
-
-## Auditable lineage and population images
-
-Every **real CLI run** now creates an independent run directory under `--runs-dir` (default `results/`). Install the plotting dependency once: `python -m pip install Pillow`.
-
-```bash
-python -m gerit --config configs/five-squares.json --runs-dir results --image-columns 5
-```
-
-Each `results/run-<utc-time>-<random-id>/` directory contains:
-- `config.json`: precise run parameters.
-- `individuals.jsonl`: one record per proposed individual, including unique identifier, birth generation, parent identifier, validated candidate geometry where accepted, mutation index list, and reasons for rejected proposals.
-- `selection.jsonl`: selected vs discarded candidate IDs at every completed selection round.
-- `generations.jsonl`: sequential generation indices, selected IDs (survivors, including duplicates when present), per-generation child counts, evaluations, elapsed seconds, and best-so-far.
-- `generation_images/gen_000.png`, `gen_001.png`, ...: one mosaic per recorded population, including **generation zero**. By design, 100 completed evolution rounds produce **101 PNGs** (the initial generation plus 100 subsequent generations), not 100.
-- `run_summary.json`: UTC start/end, wall-clock elapsed seconds measured by `perf_counter`, exact completed generation count, attempted evaluations, accepted/rejected offspring, validated best side, stop reason, PNG count.
-- `best_result.json`: best geometric solution and history.
-
-Records are appended and flushed during execution, but a process forcibly terminated before final completion may have no final `run_summary.json`; incomplete runs must never be described as completed. Geometry rejected during the mutation's internal 85-attempt search is currently aggregated into a rejected birth attempt, not a separately recorded intermediate placement; individual-level rejection tracking is implemented, but **every internal candidate position is not yet recorded**. The mutation detail records which square indices changed, but not each failed intermediate position.
-
-The telemetry and PNG code is committed; **CI/actual full 100-generation execution must be verified before claiming measured performance or completion**.
-
-
-## Adaptive mutation (optional; implemented)
-
-Run the normal grid-seeded five-square solver with adaptive child proposals:
-
-```bash
-python -m pip install Pillow
-python -m unittest discover -s tests -v
-python -m gerit --config configs/five-squares.json --adaptive --runs-dir results --image-columns 5
-```
-
-`--adaptive` enables `gerit/adaptive.py`, which chooses Gaussian displacement
-and rotation scales from **both** parent density `n / L^2` and the empirical
-fraction of *valid whole-child proposals* in a rolling window of 120 attempts.
-As children fail, the scale contracts but cannot fall below a configurable
-minimum. About 10% of child proposals retain a macro/global exploration
-component, to reduce complete loss of exploration. The rest use smaller local
-proposals. Parameters are represented by `AdaptiveSettings`.
-All accepted offspring pass the existing exact-zero-tolerance floating-point
-SAT checker. A separate independent geometry checker remains recommended.
-
-**Selection is unchanged:** 75% fitness, 25% structural diversity by default;
-parent + offspring compete. The adaptive method changes mutation only.
-Recorded runs include `adaptive_enabled` and adaptive controller diagnostics.
-This is a heuristic, not an optimizer with guaranteed convergence.
-
-### Audited experimental result: restarting from round 5
-
-The independently archived 20 selected layouts from the previous 100-round run
-(`Gerit_round5_100_more_generations.zip`) were used as the exact **starting
-population** for an experimental restart with `seed=20261028`. The starting
-population has best side `2.782832031707441`. This was a seeded restart,
-**not a bit-for-bit continuation of old RNG state**.
-
-A standalone reproducible experiment runner and the input lineage are included
-in the downloadable experiment ZIP; the usual `--adaptive` CLI without
-population input starts from a new grid population.
-
-- Adaptive: **100** rounds, 10,000 child proposals, **558** feasible child
-  proposals, best side `2.7792259910275634`.
-- Original-mutation comparison (same 20 starting layouts, seed, number of
-  generations, offspring per parent and same selection): **301** feasible
-  child proposals, best side `2.782832031707441`.
-- Validity of the adaptive run was checked against **all 558 valid offspring
-  and every selected survivor** using the numerical SAT checker. The final
-  packing was independently checked with Shapely/GEOS: no polygon intersection
-  area detected.
-- Timing and outcomes are **specific to one run each**, not statistical proof
-  that the adaptive method is superior on average. Controlled multi-seed
-  repeats remain essential.
-
-Each restart run produced 101 population mosaics (generation zero plus 100
-rounds) and append-only JSONL genealogy/selection logs. Distinguish valid
-offspring count from record improvements: the record improved in **round 44**
-but not afterwards. Code and full run data are distributed with the experiment
-artifact, not assumed to be stored as a GitHub Actions result.
-
-
-## Round 8: local compression after coordinated mutation
-
-An optional local compression stage is now available in the reusable evolutionary
-motor, alongside an optional simultaneous coordinated mutation operator:
-
-```bash
-python -m pip install Pillow
-python -m unittest discover -s tests -v
-python -m gerit --config configs/five-squares.json --coordinated --compression
-```
-
-`gerit/coordinated.py` implements coupled translation/rotation/contraction
-of several squares, evaluating full final layouts. `gerit/local_compression.py`
-implements a local search **after a valid child**: up to 35 trial steps,
-including rigid center-coordinate contraction, coordinated subset movement, and
-boundary-square displacement/rotation. Each accepted step must preserve strict
-numerical SAT validity and never increase the enclosing square side; for ties,
-the sum of width and height must decrease. Tiny floating-point re-normalization
-issues fall back to the original valid child. No physically collision-free
-intermediate trajectory is implied.
-
-The CLI options `--coordinated --compression` select this new pair of
-operators. The default remains the older solver. The CLI still starts from
-its configured grid baseline; **the completed round-8 benchmark below** starts
-from an archived previous-run population via its standalone script included in
-the experimental artifact. This distinction matters for reproducibility.
-
-### Experimental 100-round restart
-
-- Input: 20 surviving layouts in the final selected population of round 7;
-  starting best `L=2.7792259910275634`.
-- 18 fitness survivors + 2 structural diversity survivors per generation;
-  5 child proposals per parent, random seed `20261030`.
-- 100 completed new evolutionary rounds; 101 population mosaics, including
-  initial population.
-- 10,000 offspring proposals: 806 valid and 9,194 rejected.
-- For the valid children, **28,210 additional local compaction trials**
-  were performed, producing 5,062 accepted local steps; 769 children experienced
-  a strictly smaller enclosing side after compression.
-- Best `L=2.756245908757252` discovered in generation **17**, maintained
-  through generation 100; wall time `79.521464765` seconds on the experimental
-  container. This is numerical feasibility, **not a global optimality proof**.
-- A separate Shapely polygon check of the final solution found zero pairwise
-  overlap area. Append-only lineage logs, selection logs, source snapshot,
-  generation images, the source runner and an independent verification
-  report are included in the downloadable round-8 archive.
-
-**Scientific caveat:** the round-8 run used an additional 28,210 local candidate
-evaluations and a different fresh random seed. Comparing its best side to the
-earlier no-compression run does *not* by itself isolate the causal benefit of
-compression. A matched-budget, multi-seed controlled benchmark should follow.
-
-
-## Inherited probabilistic mutation learning (experimental)
-
-The new **`gerit/learning.py`** implements a lightweight contextual
-multiplicative-weights policy for rigid square packings. There are 10 movement
-families: translations on x/y, rotation, combined pose, nearest-neighbour
-relative movements, group translation/rotation/contraction, inward boundary
-movement, and tangential neighbour slides. Within each selected action,
-translation and rotation magnitudes are sampled **continuously** from a
-log-uniform distribution inside one of 3 learned probability-weighted ranges.
-Directional signs (x+/x−, y+/y−, clockwise/counterclockwise) are also learned.
-
-Each surviving child **inherits its parent's mutation-policy genes**, adjusted
-using the outcome of its own birth. An independent global policy is updated
-by both successful and failed proposals. A 14% exploration floor prevents any
-movement family from being eliminated. A contextual split based on packing
-density gives the memory some sensitivity to the state of the packing.
-
-The reward uses **child vs own parent** bounding-side reduction, not geometric
-validity alone. Direct reductions caused by mutation receive more credit than
-improvements attributable primarily to the subsequent local-compression stage.
-The policies, family probabilities and feedback events are serialized into
-the audit logs and the final population snapshot.
-
-```bash
-# Native Gerit evolutionary motor; keeps original default unchanged
-python -m gerit --config configs/five-squares.json --learning
-
-# For the controlled-start 12-square experimental runner see:
-# scripts/run_learning_pilot.py
-# scripts/run_frozen_ablation.py
-```
-
-### 12-square pilot: results and crucial limitation
-
-A real 20-generation, 100-parent **population restart** from the selected last
-generation of round 13 used 90 fitness/10 diversity and 1 proposal per parent,
-with the same initial 100 geometries and seed across three arms:
-
-| Arm | Final side L | SAT-valid offspring / 2000 | Local-compression trials |
-| --- | ---: | ---: | ---: |
-| Inherited, trained mutation policy | 4.100867969769 | 1787 | 62545 |
-| **Same new operator, frozen policy weights** | **4.078940461459** | 1741 | 60935 |
-| Prior coordinated mutation operator | 4.220659254542 | 330 | 11550 |
-
-**Interpretation:** The new proposal families and continuous step sampling
-are promising, but the trained policy did **not** beat the same operators
-with fixed probabilities in this trial. This is evidence that tuning the
-reward/credit assignment and doing larger multi-seed studies is essential,
-not evidence for a learning advantage. Each arm has only one seed, and
-**actual internal geometry-check budgets differ**. All sides remain above
-the straightforward L=4 grid construction for 12 squares.
-
-Code: `gerit/learning.py`; tests:
-`tests/test_learning.py`, `tests/test_learning_engine.py`;
-experiment/reproducibility:
-`scripts/run_learning_pilot.py` and
-`scripts/run_frozen_ablation.py`.
-The downloadable audit archive from the experiment contains every initial
-square configuration, 21 snapshots per arm, lineage, learned policy genome,
-validity evidence, and independent Shapely checks.
-
-
-## Cost-aware learning v2: matched geometry budget (12-square pilot)
-
-The experimental controller `gerit/reward_v2.py` changes **only policy
-credit assignment**, keeping the continuous proposal families, compressor,
-and 90% fitness / 10% diversity selection unchanged.
-
-- Separately record the raw mutation's side improvement relative to **its own
-  parent**, any extra compression-stage improvement, and geometric
-  `validate_packing` calls spent on mutation and compression.
-- Full credit goes to helpful direct mutations, partial credit to improvement
-  primarily achieved through local compression, and a small cost-sensitive
-  penalty to invalid or non-improving proposals.
-- Each surviving child inherits learned action-family, direction and
-  step-range weights. A shared population policy also learns from every
-  outcome. Frozen-policy control uses the **same exact operators** without
-  updating probabilities.
-- `scripts/run_reward_v2_benchmark.py` runs three paired seeds
-  (`2601,2602,2603`) with three arms: new credit v2, old credit v1, and
-  frozen weights. Every arm consumes **exactly 12,000 geometric validation
-  calls**, or 108,000 across 9 runs; born-child counts and walltimes vary.
-- All runs started from exactly the same 100 valid selected 12-square
-  individuals of Round 13. Every run completed **3 full generations plus
-  part of generation 4** at this cost cap.
-
-| Seed | New cost-aware reward | Frozen policy | Original reward |
-|---|---:|---:|---:|
-| 2601 | 4.187556116669 | 4.201765010201 | **4.186057463759** |
-| 2602 | **4.190364604733** | 4.197248420198 | 4.202374039183 |
-| 2603 | **4.177265223774** | 4.186968653167 | 4.205571999668 |
-| Mean | **4.185061981725** | 4.195327361189 | 4.198001167536 |
-
-The v2 policy beat frozen weights under this proxy cost budget in **3/3**
-seeds and beat v1 in **2/3** seeds. The six new v2 regression tests and six
-older learning tests passed. Independent
-`scripts/verify_reward_v2.py` checked every valid proposal, ancestry,
-all **900 final selected geometries**, and Shapely positive-area intersections.
-
-**Caution:** validation calls do *not* equal wall-clock cost or individual SAT
-axis projections. Three seeds and about three generations are a small pilot;
-this is not statistically convincing proof of a durable advantage.
-All nine best sides remain above the simple `L=4` grid packing. The
-experimental runner is separate from the default `--learning` CLI option;
-that option still uses the original reward unless upgraded explicitly.
+Older research experiments and regression tests remain in the repository.
+The project is experimental numerical optimization, not an independently
+certified proof of optimality. Independent floating-point geometry validation
+is useful but not formal exact-arithmetic certification.
