@@ -239,3 +239,37 @@ No previous results or learned parameters are imported. The accelerated-phase
 pilot is a *mechanism check*, not a controlled estimate of fitness benefit;
 comparison of the structural operator's merit requires one-at-a-time ablations
 with identical phase schedules, seeds and comparable geometry-check budgets.
+
+## Operator ablation after the accelerated contact-modes 30-generation pilot (2026-10-27)
+
+The user-observed accelerated 30-generation run sampled both structural operators under **identical phase schedule 5 normal, 5 precision, 5 escape, 15 diversify**:
+
+| Strategy | Proposals | Valid | Validity rate |
+|---|---:|---:|---:|
+| Contact guided (70% allocation) | 968 | 526 | 54.34% |
+| Uniform relocation (30% allocation) | 430 | 141 | 32.79% |
+
+The observed validity advantage is **21.55 percentage points**, or **1.66x the validity rate**. The final 25 parents included 9 relatively oriented packings (8 strongly oriented), compared with 5 after the default-phase v4 30-generation pilot. Because the phase schedules differ, this is **not proof** that the guided operator caused all added orientation diversity. L remained **4**, with 22 parents within L<=4.05.
+
+The next runner revision adds `--contact-probability` (range 0 to 1, default **0.70**) and **operator-specific audit counters**, without altering the default search behaviour or the fresh population. The output `run_summary.json` now includes:
+
+- `structural_move_geometry_checks` (raw + compression cost per strategy);
+- `structural_move_parent_improving_children` (valid endpoint L less than its own parent by >1e-8);
+- `structural_move_selected_children` (valid newborn actually selected into its birth generation's 25 survivors);
+- `structural_move_selected_parent_improving_children` and `structural_move_selected_strong_orientation_children`;
+- `contact_probability`, with the chosen value also saved in `config.json` and `REPRODUCE.md`.
+
+**Two short independent matched-configuration controls**, with the same seed, initialization, 25 parents, 5 proposals/parent and early 5/10/15 mode thresholds, only changing the contact fraction:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_geometry_niches.py" -v
+
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --precision-after 5 --escape-after 10 --diversify-after 15 --contact-probability 0 --output-dir results/fresh12-p25-contact0-pilot30
+
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --precision-after 5 --escape-after 10 --diversify-after 15 --contact-probability 1 --output-dir results/fresh12-p25-contact100-pilot30
+```
+
+Read each `run_summary.json` and compare rate of validity, selection, parent-relative gain, geometry checks, number of strong-orientation survivors, and best side. Note that different operators consume different numbers of random draws and checks; this is a matched-*configuration* test, **not a paired identical-candidate test**. Use multiple seeds / compute budgets before drawing robust conclusions, and do not equate simple validity with search quality. Prior directories remain untouched.
+
