@@ -14,8 +14,8 @@ COLORS = ('#6699cc','#6fba96','#eeb76b','#b494d5','#db8593',
 
 
 def draw_population(path: Path, members: list[tuple[int, Packing]],
-                    side_cap: float = 5.0, columns: int = 5) -> None:
-    """Draw each selected packing in a separately labeled fixed-scale tile."""
+                    side_cap: float | None = 5.0, columns: int = 5) -> None:
+    """Draw selected packings; None means each tile uses its actual side L."""
     tile, plot, margin = 124, 95, 12
     cols = min(columns, len(members))
     image = Image.new('RGB', (cols * tile, math.ceil(len(members) / cols) * tile), 'white')
@@ -24,9 +24,10 @@ def draw_population(path: Path, members: list[tuple[int, Packing]],
         ox = (index % cols) * tile + margin
         oy = (index // cols) * tile + margin
         draw.rectangle((ox,oy,ox+plot,oy+plot), outline='#344455', width=2)
+        tile_side = packing.container_side if side_cap is None else side_cap
         for j, square in enumerate(packing.squares):
-            pts = [(round(ox + x / side_cap * plot),
-                    round(oy + (side_cap - y) / side_cap * plot))
+            pts = [(round(ox + x / tile_side * plot),
+                    round(oy + (tile_side - y) / tile_side * plot))
                    for x,y in square_vertices(square)]
             draw.polygon(pts, fill=COLORS[j % len(COLORS)])
             draw.line(pts+[pts[0]], fill='#293a47', width=1)
@@ -46,20 +47,21 @@ def draw_best(path: Path, packing: Packing) -> None:
     side=packing.container_side
     ax.plot([0,side,side,0,0],[0,0,side,side,0],color='black',lw=1)
     ax.set(xlim=(-.05,side+.05),ylim=(-.05,side+.05),
-           title=f'Gerit: 12 unit squares — best L={side:.10f}')
+           title=f'Gerit: {len(packing.squares)} unit squares — best L={side:.10f}')
     ax.set_aspect('equal')
     fig.tight_layout()
     fig.savefig(path,dpi=150)
     plt.close(fig)
 
 
-def draw_progress(path: Path, generations: list[dict]) -> None:
+def draw_progress(path: Path, generations: list[dict], grid_reference_side: float=4.0) -> None:
     fig, ax = plt.subplots(figsize=(9,4.8))
     ax.plot([r['generation'] for r in generations],
             [r['best_side'] for r in generations], lw=1.8)
-    ax.axhline(4.,ls='--',lw=1,color='gray',label='Simple 4 × 3 grid, L=4')
+    ax.axhline(grid_reference_side,ls='--',lw=1,color='gray',
+               label=f'Known grid baseline L={grid_reference_side:g}')
     ax.set(xlabel='Generation',ylabel='Best enclosing side L',
-           title='Gerit reward v2, 12 squares: inherited policy continuation')
+           title='Gerit evolutionary search — inherited policy continuation')
     ax.grid(alpha=.18)
     ax.legend()
     fig.tight_layout()
