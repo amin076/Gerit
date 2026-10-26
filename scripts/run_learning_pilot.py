@@ -77,7 +77,8 @@ def jsonl(handle, item):
 
 
 def run_arm(name:str,src:list[dict],sha:str):
-    learning=name=='learned'
+    learning=name in ('learned','frozen')
+    train_policy=(name=='learned')
     folder=DEST/name
     folder.mkdir(parents=True)
     images=folder/'generation_images';images.mkdir()
@@ -137,10 +138,14 @@ def run_arm(name:str,src:list[dict],sha:str):
                                          'side_gain':comp_gain}
                 valid=candidate is not None and validate_packing(candidate,tolerance=0.0).valid
                 if learning:
-                    child_policy,feedback=ctl.update(original,meta,valid,
-                        parent.container_side-raw.container_side if raw is not None else 0.0,
-                        comp_gain,parent.container_side)
-                    meta['feedback']=feedback
+                    if train_policy:
+                        child_policy,feedback=ctl.update(original,meta,valid,
+                            parent.container_side-raw.container_side if raw is not None else 0.0,
+                            comp_gain,parent.container_side)
+                        meta['feedback']=feedback
+                    else:
+                        child_policy=original  # immutable-by-convention, never updated
+                        meta['feedback']={'training_enabled':False,'reward':0.0}
                 uid=next_id;next_id+=1
                 if valid:
                     count_valid+=1;kids.append((uid,candidate))
@@ -172,7 +177,7 @@ def run_arm(name:str,src:list[dict],sha:str):
     assert count_valid+count_invalid==POP*GENERATIONS
     assert len(list(images.glob('gen_*.png')))==GENERATIONS+1
     assert len({uid for uid,p in pop})==POP
-    summary={'arm':name,'source_population_sha256':sha,'seed':SEED,
+    summary={'arm':name,'policy_training_enabled':train_policy,'source_population_sha256':sha,'seed':SEED,
              'generations':GENERATIONS,'population':POP,'quality_slots':90,'diversity_slots':10,
              'offspring_per_parent':1,'best_side_start':start_side,'best_side_end':best.container_side,
              'end_best_id':best_uid,'accepted':count_valid,'rejected':count_invalid,
