@@ -1,5 +1,6 @@
 """Selection and contact-aware relocation regressions for fresh Gerit."""
 import math
+import json
 import random
 import tempfile
 import unittest
@@ -66,6 +67,44 @@ class GeometryNicheTests(unittest.TestCase):
             self.assertGreater(report['mode_generations'].get('escape',0),0)
             self.assertGreater(report['mode_generations'].get('diversify',0),0)
             self.assertTrue((Path(td)/'short'/'verification.json').exists())
+
+    def test_contact_probability_ablation_and_selected_lineage_metrics(self):
+        # Same new initial population, same phase schedule and same generation
+        # budget; only the structural operator mixture differs. RNG trajectories
+        # can diverge, so paired seeds/replicates are still required for claims.
+        with tempfile.TemporaryDirectory() as td:
+            configs=[]
+            for ratio,expected in ((0.0,'uniform_relocate'),(1.0,'contact_guided')):
+                folder=Path(td)/f'contact_{ratio}'
+                report=run(generations=3,seed=2715,directory=folder,make_zip=False,
+                           contact_probability=ratio,
+                           stagnation_settings=StagnationSettings(1,2,3,1e-6))
+                configs.append(report)
+                self.assertEqual(report['contact_probability'],ratio)
+                self.assertEqual(report['proposals'],3*25*5)
+                self.assertEqual(set(report['structural_move_proposals']),{expected})
+                self.assertGreater(report['structural_move_proposals'][expected],0)
+                valid=report['structural_move_valid_children'][expected]
+                self.assertGreater(report['structural_move_geometry_checks'].get(expected,0),0)
+                selected=report['structural_move_selected_children'].get(expected,0)
+                self.assertLessEqual(selected,valid)
+                self.assertLessEqual(
+                    report['structural_move_selected_parent_improving_children'].get(expected,0),
+                    selected)
+                self.assertEqual(report['mode_generations'],configs[0]['mode_generations'])
+                self.assertEqual(report['initial_best_side'],4.0)
+                self.assertEqual(report['final_selected_max_positive_overlap_area'],0.0)
+                self.assertEqual(report['inherited_parents'],0)
+                with (folder/'initial_population.json').open(encoding='utf-8') as f:
+                    initial=json.load(f)
+                if ratio==0.0: reference_initial=initial
+                else: self.assertEqual(initial,reference_initial)
+                self.assertEqual(json.loads((folder/'verification.json').read_text())['status'],
+                                 'verified')
+            for invalid in (-0.01,1.01,float('nan')):
+                with self.assertRaises(ValueError):
+                    run(generations=1,directory=Path(td)/f'invalid_{invalid}',
+                        make_zip=False,contact_probability=invalid)
 
     def test_one_generation_smoke_counts_guided(self):
         with tempfile.TemporaryDirectory() as td:
