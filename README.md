@@ -390,3 +390,20 @@ $r.structural_move_valid_children
 
 This new pilot **deliberately changes the time spent in each mode**, so its end result is **not an apples-to-apples comparison** to the earlier 30-generation runs. Its purpose is to test that the guided and uniform structural move mechanisms actually operate.
 
+### Contact vs uniform structural relocation: short controlled pilot
+
+The accelerated 30-generation `contact-modes30` experiment observed **526/968 = 54.3%** valid contact-guided offspring versus **141/430 = 32.8%** valid uniform-relocation offspring, and **9** final relatively oriented parents. Both operators were active (5/5/5/15 generations across normal/precision/escape/diversify), but the best remained L=4. Validity is not synonymous with evolutionary quality, and the earlier default-phase pilot cannot be used to attribute the entire rotation-survival gain to the new operator.
+
+New optional `--contact-probability` parameter (0..1, default 0.70) lets short runs compare the operators **while holding initial seed and phase schedule fixed**. The summary additionally counts, separately by operator, **geometry checks, parent-relative improvements, newborns selected into the next generation, and selected offspring with genuine relative rotation**. No inherited training is loaded; no source-class quota is added. Existing runs never need to be deleted.
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_geometry_niches.py" -v
+
+py -3 scripts/run_fresh_25.py --generations 30 --seed 2715 --precision-after 5 --escape-after 10 --diversify-after 15 --contact-probability 0 --output-dir results/fresh12-p25-contact0-pilot30
+py -3 scripts/run_fresh_25.py --generations 30 --seed 2715 --precision-after 5 --escape-after 10 --diversify-after 15 --contact-probability 1 --output-dir results/fresh12-p25-contact100-pilot30
+```
+
+See [detailed experiment design](docs/FRESH_START_25.md). Short pilots alone do not establish improved packing quality or global optimality.
+
