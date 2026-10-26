@@ -215,3 +215,22 @@ Older research experiments and regression tests remain in the repository.
 The project is experimental numerical optimization, not an independently
 certified proof of optimality. Independent floating-point geometry validation
 is useful but not formal exact-arithmetic certification.
+
+
+## Adaptive v4 — progress-window escape (recommended after Round 20)
+
+To continue your own Windows results, **pull the latest repository** and run:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -v
+py -3 scripts/run_adaptive_v4.py --input results/round20-adaptive/selected_population_final.json --generations 300 --seed 2611 --output-dir results/round21-adaptive-v4
+```
+
+The v3 runner (`scripts/run_adaptive.py`) is still available and unchanged. Version 4 retains its relative-credit learning and best-packing archive, but measures actual improvement in the last **80 generations**: progress below **0.0001** triggers micro-precision; 20 successive weak-window observations enable structural escape; 60 enable diversification. Legacy 40/80/120 no-record thresholds remain a fallback. Improvement of only a few millionths no longer necessarily restarts the escape schedule.
+
+If the imported population lives beside the prior `generations.jsonl`, v4 reconstructs the rolling history automatically. A v4 continuation stores its own progress state in the final population JSON. No grid packing is injected.
+
+Outputs: `mode_metrics.json` separates births, valid children, direct/final gains, geometric checks and global-record events **by active search mode**. `generations.csv` includes rolling gain and weak-progress streak; archives and per-generation images remain available. See [Adaptive v4 details](docs/ADAPTIVE_V4.md). No additional dependencies.
+
