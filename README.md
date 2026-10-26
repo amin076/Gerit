@@ -298,3 +298,26 @@ If a prior attempt created `results/round22-connected` and failed before generat
 git pull --ff-only
 py -3 scripts/run_adaptive_tilings.py --input results/round21-adaptive-v4/selected_population_final.json --generations 300 --seed 2613 --output-dir results/round22-connected-fixed --tiling-seeds 3
 ```
+
+## Fresh independent 12-square experiment — 25 parents, 300 generations
+
+This is the **recommended new experiment** when you want to start from zero, without inheriting any old population, previous fitness records or learned policy weights. It explicitly uses *both* connected axis-aligned square constructions and newly randomized/rotated placements. **All initializers compete in one population**; the selected parents do not have permanent source quotas.
+
+On Windows:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 300 --seed 2715 --output-dir results/fresh12-p25-g300
+```
+
+- Starting population: **7 distinct constructive connected tilings + 18 new stochastic/rotated or sparse packings** = 25 parents, all strictly valid.
+- All policy weights begin neutral. The runner has **no `--input`** option, does not read `results/` from prior sessions, and does not import learned global weights.
+- **5 births per parent** × 25 parents = **125 attempted offspring per generation**, 37,500 proposals over 300 generations; 301 population images, full logs, independent Shapely validation and audited ZIPs.
+- Selection has **25 survivors** every generation: quality + diversity close to the record + a few wider explorers. All source labels are ignored by selection. Keeps the current adaptive relative learning, local compression, micro-search and stagnation-triggered structural relocation.
+- L=4 for n=12 is available immediately as a mathematically constructed starting arrangement; evolutionary progress is a **strict result below the initial best**, not generation-zero grid inclusion.
+- **Do not delete old runs** to reset this experiment. They are never read. If you choose to clean old local files, back up your data separately; the program never deletes existing results automatically.
+
+Full protocol and output details: [Fresh start guide](docs/FRESH_START_25.md).
+
