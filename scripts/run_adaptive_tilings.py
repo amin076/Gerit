@@ -196,17 +196,33 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
     (directory/'source_population_metadata.json').write_text(json.dumps({'source_path':str(source_file),'source_sha256':source_full_sha,'selection_rule':'all 20 previous final survivors, in original order','selected_ids':[uid for uid,p in pop]},indent=2),encoding='utf-8')
     ctl=AdaptiveCreditController()
     ctl.global_policy=normalize_policy(source_global_policy)
-    stagnation=ProgressAwareStagnationController(min(p.container_side for uid,p in pop), stagnation_settings,window_settings)
+    seeded_best_side=min(p.container_side for _,p in pop)
+    stagnation=ProgressAwareStagnationController(seeded_best_side, stagnation_settings,window_settings)
     grid_initialized=(previous_grid_flag or bool(tiling_seed_records))
     if 'adaptive_controller' in inherited_metadata:
         ctl.baseline_by_context.update(inherited_metadata['adaptive_controller'].get('reward_baselines', {}))
-    if 'stagnation_state' in inherited_metadata:
-        previous=inherited_metadata['stagnation_state']
-        carried_idle=max(0, int(previous.get('elapsed_generations',0))-
-                           int(previous.get('last_significant_generation',0)))
-        stagnation.last_significant_generation=-carried_idle
-    stagnation.restore_progress(inherited_metadata.get('stagnation_state',{}).get('progress'),
-                                source_file.parent/'generations.jsonl')
+    # The imported JSONL/progress history measures the OLD population's record.
+    # A strictly better constructed seed is an external initialization event,
+    # not an evolutionary gain. It is therefore invalid to paste the old
+    # rolling series onto the new initial best. Reset only this progress clock;
+    # keep the inherited individual and global learning policies untouched.
+    seeded_record_improves_import = bool(
+        tiling_seed_records and seeded_best_side < imported_best_side - 1e-10)
+    if seeded_record_improves_import:
+        progress_reset_reason='constructive_seed_improved_initial_best'
+        stagnation.history_source='fresh_after_constructive_seed_injection'
+        print(f'PROGRESS_RESET reason={progress_reset_reason} '
+              f'imported_L={imported_best_side:.12f} seeded_L={seeded_best_side:.12f} '
+              f'previous_stagnation_history=archived_not_reused',flush=True)
+    else:
+        progress_reset_reason=None
+        if 'stagnation_state' in inherited_metadata:
+            previous=inherited_metadata['stagnation_state']
+            carried_idle=max(0, int(previous.get('elapsed_generations',0))-
+                               int(previous.get('last_significant_generation',0)))
+            stagnation.last_significant_generation=-carried_idle
+        stagnation.restore_progress(inherited_metadata.get('stagnation_state',{}).get('progress'),
+                                    source_file.parent/'generations.jsonl')
     stagnation.previous_mode=stagnation.mode(0)
     compressor=CompressionSettings()
     state={uid:normalize_policy(source_policy[uid]) for uid,p in pop}
@@ -246,6 +262,9 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
         'stagnation_settings':asdict(stagnation.settings),
         'rolling_progress_settings':asdict(stagnation.window_settings),
         'prior_rolling_history_source':stagnation.history_source,
+        'progress_reset_reason':progress_reset_reason,
+        'best_side_before_construction':imported_best_side,
+        'best_side_after_construction':seeded_best_side,
         'known_grid_injected':grid_initialized,
         'constructive_initial_injection_count':len(tiling_seed_records),
         'constructive_initial_seeds':{str(k):v for k,v in tiling_seed_records.items()},
@@ -434,6 +453,8 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
         'known_grid_injected':grid_initialized,
         'constructive_initial_seed_count':len(tiling_seed_records),
         'constructive_seed_metadata':{str(k):v for k,v in tiling_seed_records.items()},
+        'progress_reset_reason':progress_reset_reason,
+        'progress_history_source':stagnation.history_source,
         'evolved_baseline_before_seed_injection':imported_best_side,
         'best_unseeded_evolutionary_lineage':(unseeded_best.container_side if unseeded_best else None),
         'best_record_origin':('constructive_seed_or_descendant' if constructive_by_uid[best_id]
@@ -496,6 +517,7 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
         'constructive_initial_seed_count':len(tiling_seed_records),
         'constructive_baseline_source':'integer_connected_row_shapes',
         'original_evolved_best_side':imported_best_side,
+        'initial_progress_reset_reason':progress_reset_reason,
         'adaptive_controller':{'reward_baselines':ctl.baseline_by_context},
         'stagnation_state':{**stagnation.snapshot(),'elapsed_generations':generations}
     },indent=2),encoding='utf-8')
@@ -529,6 +551,7 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
 * The constructive grid benchmark for n={n_squares} has side L={known_grid.grid_upper_side}, while area alone implies lower L>={known_grid.area_lower_side:.9f}.
 * Focused search acceptance cap={side_cap:.9f} is not the imported parent side. With automatic mode each diverse parent is allowed its own side + {cap_margin} exploration. Each picture tile shows the packing's actual side.
 * Known connected tilings injected: {len(tiling_seed_records)}. These are *constructed known baselines*, NOT discovered improvements. Input evolved best before seeding: {imported_best_side:.12f}; nonconstructive lineage best after evolution: {unseeded_best.container_side if unseeded_best else None}. Every individual and final parent carries constructive_ancestor provenance.
+* Rolling-progress initialization: {stagnation.history_source}; reset reason: {progress_reset_reason}. Injecting a strictly better constructive seed starts a fresh search-stagnation history; source histories remain in the original source run and source provenance hashes, without being misattributed to the new baseline.
 * This continuation alone does not prove reward-v2's causal advantage over frozen weights.
 
 ## Files
