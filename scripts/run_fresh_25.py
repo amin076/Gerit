@@ -26,6 +26,7 @@ from gerit.adaptive_v4 import (AdaptiveCreditController,
     ProgressAwareStagnationController, StagnationSettings, WindowSettings,
     propose_micro, propose_reconfigure)
 from gerit.learning import propose_learned
+from gerit.contact_relocation import propose_contact_relocate
 from gerit.local_compression import CompressionSettings, compress_valid
 from gerit.visualization import draw_population, draw_best
 from gerit.grid_bounds import grid_bounds,automatic_search_cap
@@ -87,7 +88,27 @@ def select_competitive_diverse(pool:list[tuple[int,Packing]], number:int,
                     -packing.container_side,-uid)
         idx=max(candidate_ids,key=score)
         chosen.append(remain.pop(idx));return True
-    for _ in range(near_n):
+    # A small geometry-defined orientation niche guards against a 4x4
+    # aligned grid monopolizing the entire near-best diversity frontier.
+    # This is NOT a quota for random/stochastic *ancestry*: a tilted child
+    # of a grid seed qualifies identically to a tilted stochastic child.
+    # Only packings close to the best side are eligible; candidates still
+    # compete on novelty and fitness, and unused slots revert to open novelty.
+    target_angled = round(number*(.20 if mode=='diversify' else .12))
+    angled_count=sum(relative_angle_spread(p)>0.02 for _,p in chosen)
+    reserved=0
+    while reserved<near_n and angled_count<target_angled:
+        options=[i for i,(_,p) in enumerate(remain)
+                 if p.container_side<=best_L+0.45 and relative_angle_spread(p)>0.02]
+        if not options:break
+        idx=max(options,key=lambda i:(
+            min((packing_distance(remain[i][1],x[1]) for x in chosen), default=0.)
+            - .32*(remain[i][1].container_side-best_L),
+            relative_angle_spread(remain[i][1]),
+            -remain[i][1].container_side,-remain[i][0]))
+        chosen.append(remain.pop(idx))
+        reserved+=1;angled_count+=1
+    for _ in range(near_n-reserved):
         if not take_one(False):break
     for _ in range(frontier_n):
         if not take_one(True):break
@@ -176,6 +197,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     next_id=population+1
     modes=Counter();stats=Counter();action_counts=Counter();mode_births=Counter();mode_valid=Counter()
     mode_checks=Counter();mode_record_events=Counter();mode_record_gain=Counter()
+    structural_modes=Counter();structural_valid=Counter();structural_selected=Counter()
     initial_origin_breakdown=dict(Counter(initial_kind.values()))
     stochastic_initial_sides=[p.container_side for uid,p in pop
                               if initial_kind[uid]!='connected_tiling']
@@ -202,7 +224,12 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             'competitive_stochastic_threshold_side':grid.grid_upper_side+0.4,
             'grid_upper_bound':grid.grid_upper_side,'area_lower_bound':grid.area_lower_side,
             'focused_cap':focused_cap,'cap_margin':cap_margin,
-            'selection':'quality and competitive novelty only; source label ignored',
+            'selection':'quality, near-best geometric angle niches and novelty; source label ignored',
+            'orientation_niche_threshold_radians':0.02,
+            'orientation_niche_max_above_best_side':0.45,
+            'orientation_niche_target_normal':round(.12*population),
+            'orientation_niche_target_diversify':round(.20*population),
+            'structural_relocation':'70% contact-guided near-edge placements, 30% original uniform relocations',
             'normal_quota':{'quality':round(.64*population),'frontier':round(.08*population)},
             'stagnating_quota':{'quality':round(.52*population),'frontier':round(.12*population)},
             'compressor':asdict(compressor),'stagnation':asdict(stagnation.settings),
@@ -218,6 +245,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
              'selected_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
              'near_best_parent_count':sum(p.container_side<=best.container_side+0.05
                                           for _,p in pop),
+             'strong_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.02
+                                                    for _,p in pop),
              'rotated_parent_count':sum(any(abs(math.sin(2*s.angle))>1e-7
                                             for s in p.squares) for _,p in pop),
              'relative_orientation_parent_count':sum(relative_angle_spread(p)>0.01
@@ -254,9 +283,11 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                     if mode=='precision' and chance<.55:
                         raw,meta=propose_micro(parent,rng,parent_cap)
                     elif mode=='escape' and chance<.42:
-                        raw,meta=propose_reconfigure(parent,rng,parent_cap)
+                        raw,meta=(propose_contact_relocate(parent,rng,parent_cap)
+                                  if rng.random()<.70 else propose_reconfigure(parent,rng,parent_cap))
                     elif mode=='diversify' and chance<.60:
-                        raw,meta=propose_reconfigure(parent,rng,parent_cap)
+                        raw,meta=(propose_contact_relocate(parent,rng,parent_cap)
+                                  if rng.random()<.70 else propose_reconfigure(parent,rng,parent_cap))
                     elif mode in ('escape','diversify') and chance<.75:
                         raw,meta=propose_micro(parent,rng,parent_cap)
                     else:
@@ -281,6 +312,12 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                     if valid and final_gain>1e-8:stats['final_improving']+=1
                     if valid and compression_gain>1e-8:stats['compression_improving']+=1
                     action_counts[meta['action']]+=1
+                    if meta.get('move_strategy')=='contact_guided':
+                        structural_modes['contact_guided']+=1
+                        if valid:structural_valid['contact_guided']+=1
+                    elif meta.get('action')=='structural_relocate':
+                        structural_modes['uniform_relocate']+=1
+                        if valid:structural_valid['uniform_relocate']+=1
                     policy,feedback=controller.update(weights[uid],meta,valid,raw_gain,
                            compression_gain,parent.container_side,used_raw,used_comp,
                            global_best_side=best.container_side,train=True)
@@ -338,6 +375,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'final_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
         'final_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.01
                                                      for _,p in pop),
+        'final_strong_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.02
+                                                            for _,p in pop),
         'final_near_best_parent_count':sum(p.container_side<=best.container_side+0.05
                                          for _,p in pop),
         'inherited_parents':0,'inherited_training':False,
@@ -354,6 +393,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'mode_generations':dict(modes),'mode_proposals':dict(mode_births),
         'mode_valid_children':dict(mode_valid),'mode_geometry_checks':dict(mode_checks),
         'mode_record_events':dict(mode_record_events),'mode_record_gain':dict(mode_record_gain),
+        'structural_move_proposals':dict(structural_modes),
+        'structural_move_valid_children':dict(structural_valid),
         'action_proposals':dict(action_counts),'stagnation':stagnation.snapshot(),
         'controller':controller.snapshot(),
         'final_selected_max_positive_overlap_area':overlap,
@@ -379,7 +420,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
          'individual_id':best_id,'squares':[asdict(x) for x in best.squares]},indent=2),encoding='utf-8')
     columns=['generation','best_side','population_best','search_mode','stagnation_generations',
              'rolling_window_gain','weak_progress_streak','near_best_parent_count',
-             'rotated_parent_count','valid_children_this_gen',
+             'rotated_parent_count','relative_orientation_parent_count',
+             'strong_relative_orientation_parent_count','valid_children_this_gen',
              'proposals_cumulative','valid_children_cumulative','geometry_checks_cumulative','elapsed_seconds']
     with (directory/'generations.csv').open('w',newline='',encoding='utf-8') as f:
         writer=csv.DictWriter(f,fieldnames=columns);writer.writeheader()
@@ -402,7 +444,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
        f'--cap-margin {cap_margin} --generations {generations} --seed {seed} '
        f'--output-dir <new directory>\n',encoding='utf-8')
     dependency_paths=[Path(__file__),ROOT/'gerit'/'fresh_population.py',
-      ROOT/'gerit'/'connected_tilings.py',ROOT/'gerit'/'grid_bounds.py',
+      ROOT/'gerit'/'contact_relocation.py',ROOT/'gerit'/'connected_tilings.py',ROOT/'gerit'/'grid_bounds.py',
       ROOT/'gerit'/'geometry.py',ROOT/'gerit'/'selection.py',ROOT/'gerit'/'learning.py',
       ROOT/'gerit'/'local_compression.py',ROOT/'gerit'/'reward_v2.py',
       ROOT/'gerit'/'adaptive_v3.py',ROOT/'gerit'/'adaptive_v4.py',
