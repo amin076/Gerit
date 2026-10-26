@@ -22,6 +22,22 @@ class FreshRestartTests(unittest.TestCase):
         self.assertTrue(all(validate_packing(m.packing,tolerance=0.0).valid for m in pop))
         self.assertEqual(pop,make_fresh_population(12,25,7,2715))
 
+    def test_stochastic_initializers_are_competitive_and_balanced(self):
+        # Regression found by auditing fresh12-p25-g300: the old initializer
+        # made every random rotation from ONE canonical grid, mostly at L>4.34.
+        pop=make_fresh_population(12,25,7,2715)
+        random_members=[x for x in pop if x.source!='connected_tiling']
+        mix=Counter(x.source for x in random_members)
+        self.assertEqual(mix,{'random_rotated':9,
+                              'random_perturbed':6,'random_sparse':3})
+        close=[x for x in random_members
+               if x.packing.container_side<=4.4]
+        self.assertGreaterEqual(len(close),12)
+        self.assertGreaterEqual(len(set(round(x.packing.container_side,5)
+                                        for x in close)),10)
+        self.assertTrue(all(validate_packing(m.packing,tolerance=0.0).valid
+                            for m in pop))
+
     def test_other_counts_and_input_errors(self):
         for n,side in ((23,5),(26,6)):
             with self.subTest(n=n):
@@ -60,6 +76,15 @@ class FreshRestartTests(unittest.TestCase):
             initial=json.loads((out/'initial_population.json').read_text())
             self.assertEqual(len(initial['members']),25)
             self.assertEqual(initial['learned_policy_initialization'],'fresh_zero')
+            self.assertEqual(summary['initial_origin_breakdown']['random_rotated'],9)
+            self.assertGreaterEqual(summary['competitive_stochastic_initial_count'],12)
+            self.assertEqual(sum(summary['final_ancestry_counts'].values()),25)
+            history=[json.loads(line) for line in (out/'generations.jsonl').read_text().splitlines()]
+            self.assertEqual(history[0]['selected_ancestry_counts']['connected_tiling'],7)
+            self.assertEqual(sum(history[1]['selected_ancestry_counts'].values()),25)
+            assert len(json.loads((out/'selected_population_final.json').read_text())['selected_members'])==25
+            self.assertTrue(all('initial_ancestor_source' in m for m in
+                json.loads((out/'selected_population_final.json').read_text())['selected_members']))
             with (out/'individuals.jsonl').open() as f:
                 rows=[json.loads(line) for line in f]
             self.assertEqual(len(rows),150)
