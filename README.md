@@ -372,3 +372,21 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 
 Diagnostics are in `run_summary.json` (including `structural_move_proposals`, `structural_move_valid_children`, `final_relative_orientation_parent_count` and `final_strong_relative_orientation_parent_count`), and `generations.jsonl`. See [fresh-start experiment notes](docs/FRESH_START_25.md).
 
+### Diagnosis after the geometry-v4 30-generation pilot (2026-10-27)
+
+The new geometry-based orientation niches preserved **5 strongly relatively tilted parents** at generation 30 (versus **3** in init-v3), although the best side remained **L=4** and there were **22** near-best survivors. This is a small mechanism-level signal from a single random seed, **not** a demonstration of improved packing quality.
+
+The two empty `structural_move_*` reports are **expected**: a 30-generation run with unchanged default idle limits (40/80/120) never enters the `escape` or `diversify` modes that call either structural relocation operator. To diagnose contact moves cheaply, the runner has **three optional CLI flags** for the idle phase transitions. Defaults remain **unchanged**:
+
+```powershell
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_geometry_niches.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --precision-after 5 --escape-after 10 --diversify-after 15 --output-dir results/fresh12-p25-contact-modes30
+$r = Get-Content "results/fresh12-p25-contact-modes30/run_summary.json" -Raw | ConvertFrom-Json
+$r.mode_generations
+$r.structural_move_proposals
+$r.structural_move_valid_children
+```
+
+This new pilot **deliberately changes the time spent in each mode**, so its end result is **not an apples-to-apples comparison** to the earlier 30-generation runs. Its purpose is to test that the guided and uniform structural move mechanisms actually operate.
+
