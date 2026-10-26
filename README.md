@@ -337,3 +337,20 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 
 Detailed ancestry audit: [Fresh start guide](docs/FRESH_START_25.md). Compare multiple matched seeds and geometric-check budgets before crediting gains to the modified initializer.
 
+### Fresh initializer v3: measurable relative orientation (2026-10-27)
+
+In the 30-generation initializer-v2 pilot, **15/18 stochastic starts** had initial sides <=4.4, but the final 25 contained 23 `connected_tiling` and 2 `random_sparse` ancestral lines; 23/25 were within L=4.05. This does **not** by itself prove unfair source selection. Inspection revealed that v2's nine `random_rotated` starts simply rotated *every square together*, leaving all relative angles zero.
+
+Initializer **v3** now gives two spatial subgroups opposing **relative square orientations**, while other starts use individual tilts, producing 15 genuinely nonparallel compact stochastic parents in the n=12 seed-2715 case. The selector still uses **geometry and fitness only**, with no origin quotas. New diagnostics report `relative_orientation_parent_count` per generation plus initial/final counts. A one-generation smoke test retained 5 genuinely relatively rotated genomes; this is **not** evidence of improved 300-generation fitness.
+
+For a direct **30-generation pilot**, not a repeat of the full study:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --output-dir results/fresh12-p25-initv3-pilot30
+```
+
+See [Fresh start guide](docs/FRESH_START_25.md) for a per-generation orientation-diversity PowerShell query.
+
