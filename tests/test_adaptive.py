@@ -44,13 +44,16 @@ class TestAdaptive(unittest.TestCase):
     def test_evolution_engine_with_adaptive_mode(self):
         from gerit.config import RunConfig
         from gerit.evolution import evolve
-        result = evolve(RunConfig(initial_population=3,
+        result = evolve(RunConfig(initial_population=1,
                                   next_generation_population=4,
                                   offspring_per_parent=1,
                                   max_generations=2,
                                   max_evaluations=30,
                                   seed=23), adaptive=True)
+        # Keep the initialization budget deterministic: one seed plus
+        # 1 and 4 offspring proposals in two completed generations.
         self.assertEqual(len(result.history), 3)
+        self.assertEqual(result.evaluations, 6)
         self.assertTrue(validate_packing(result.best, tolerance=0.0).valid)
         self.assertLessEqual(result.evaluations, 30)
 
