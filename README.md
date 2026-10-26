@@ -234,3 +234,30 @@ If the imported population lives beside the prior `generations.jsonl`, v4 recons
 
 Outputs: `mode_metrics.json` separates births, valid children, direct/final gains, geometric checks and global-record events **by active search mode**. `generations.csv` includes rolling gain and weak-progress streak; archives and per-generation images remain available. See [Adaptive v4 details](docs/ADAPTIVE_V4.md). No additional dependencies.
 
+
+## Grid-aware search for any square count (optional after Round 21)
+
+**Why did earlier code show 5×5 for 12 squares?** In v3/v4, `SIDE_CAP=5.0` was a search acceptance cap *and* a fixed image scale—not the initial parent's bounding side. Twenty genuine saved parents from the prior round were imported instead.
+
+A valid axis-aligned grid of **n** unit squares has side `ceil(sqrt(n))`; this is a **constructive upper bound** on the optimal side, **not** a lower bound. Basic area provides the lower bound `sqrt(n)`. Examples: 12 squares fit in 4×3 within L=4; 23 squares in L=5; 26 squares in L=6.
+
+To continue the **real evolved population** from your latest local Round 21, without injecting a known grid:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_grid_bounds.py" -v
+py -3 scripts/run_adaptive_auto.py --input results/round21-adaptive-v4/selected_population_final.json --generations 300 --seed 2612 --output-dir results/round22-grid-aware
+```
+
+The new runner inherits all learned parent/global policies and rolling stagnation history. Its default `--side-cap auto` uses a focused cap `max(ceil(sqrt(n)), imported best side)+0.15`, but allows each *diverse parent* to mutate up to `max(focused cap, its own side+0.15)`. Thus it never invalidates the inherited 4.00... parents or gratuitously eliminates worse exploratory lineages. Alter the exploratory allowance with `--cap-margin 0.25`; pass `--side-cap 5` for the legacy fixed cap. Population tiles show the **actual individual side**, not a fixed 5×5 frame.
+
+To *explicitly* start an **independent known-grid control** (not a discovered evolutionary record):
+
+```powershell
+py -3 scripts/make_grid_population.py --squares 23 --output data/grid23.json
+py -3 scripts/run_adaptive_auto.py --input data/grid23.json --generations 100 --seed 2323 --output-dir results/grid23-explicit
+```
+
+The grid initializer creates 20 labelled copies of the known valid grid, with neutral policy memory; other values such as `--squares 26` work too. **Do not** attribute the known grid's initial L to the evolutionary search. The previous `run_adaptive_v4.py` remains unchanged for reproducibility. See [design and limits](docs/GRID_AWARE_SEARCH.md).
+
