@@ -31,25 +31,36 @@ def _random_shape(n: int, rng: random.Random, variant: int,
     # rotations, 2 individually tilted configurations and 1 broad explorer.
     # A retry must not silently change the intended slot's family.
     mode=0 if variant%6 in (0,1,2) else (1 if variant%6 in (3,4) else 2)
-    if mode==0:  # rotated *different* connected silhouettes, not only the canonical grid
+    if mode==0:  # two differently oriented subgroups, NOT rigid rotation of the whole packing
         source=rng.choice(structural_options)
-        alpha=rng.uniform(0.012,0.070)*rng.choice([-1,1])
-        scale=rng.uniform(1.002,1.016)
-        center_x=sum(s.x for s in source.squares)/n
-        center_y=sum(s.y for s in source.squares)/n
-        ca,sa=math.cos(alpha),math.sin(alpha)
-        squares=tuple(Square(center_x+scale*((s.x-center_x)*ca-(s.y-center_y)*sa),
-                             center_y+scale*((s.x-center_x)*sa+(s.y-center_y)*ca),alpha)
-                      for s in source.squares)
-    elif mode==1:  # independent perturbed centers, slight relative rotations
-        source=rng.choice(structural_options)
-        # Guaranteed breathing space for all small independent angle changes.
-        scale=rng.uniform(1.026,1.061)
+        # Rigidly rotating *all* unit squares together leaves every relative
+        # angle at zero and adds no genuine orientational diversity. Split
+        # centers into two spatial groups and give the groups opposite tilts.
+        axis=rng.choice(('x','y'))
+        order=sorted(range(n),key=lambda i:((source.squares[i].x if axis=='x'
+                                               else source.squares[i].y),
+                                              source.squares[i].x,source.squares[i].y))
+        group=set(order[:n//2])
+        direction=rng.choice((-1.,1.))
+        a=direction*rng.uniform(.028,.062)
+        b=-direction*rng.uniform(.022,.057)
+        # A small uniform expansion makes the new relative angles feasible
+        # without using inherited poses or optimization history.
+        scale=1+1.24*max(abs(a),abs(b))+rng.uniform(.005,.016)
         cx=sum(s.x for s in source.squares)/n
         cy=sum(s.y for s in source.squares)/n
-        squares=tuple(Square(cx+(s.x-cx)*scale+rng.uniform(-0.0035,0.0035),
-                             cy+(s.y-cy)*scale+rng.uniform(-0.0035,0.0035),
-                             rng.uniform(-0.010,0.010)) for s in source.squares)
+        squares=tuple(Square(cx+(s.x-cx)*scale,cy+(s.y-cy)*scale,
+                             a if i in group else b)
+                      for i,s in enumerate(source.squares))
+    elif mode==1:  # true independent angles, with nonuniform local center jitter
+        source=rng.choice(structural_options)
+        angles=[rng.uniform(-.055,.055) for _ in source.squares]
+        scale=1+1.28*max(abs(a) for a in angles)+rng.uniform(.010,.022)
+        cx=sum(s.x for s in source.squares)/n
+        cy=sum(s.y for s in source.squares)/n
+        squares=tuple(Square(cx+(s.x-cx)*scale+rng.uniform(-.005,.005),
+                             cy+(s.y-cy)*scale+rng.uniform(-.005,.005),a)
+                      for s,a in zip(source.squares,angles))
     else:  # sparse randomized lattice occupancy with true positional novelty
         lattice=side+1 if n <= (side+1)**2 else side+2
         cells=rng.sample([(x,y) for y in range(lattice) for x in range(lattice)],n)
