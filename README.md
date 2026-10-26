@@ -354,3 +354,21 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 
 See [Fresh start guide](docs/FRESH_START_25.md) for a per-generation orientation-diversity PowerShell query.
 
+### Follow-up to the v3 thirty-generation orientation audit: geometric diversity v4
+
+The actual `initv3-pilot30` result was **L=4**, **18 relatively oriented initial genomes**, and only **3 relatively oriented final parents**; ancestry of the final 25 was 23 from connected tilings and 2 from random-sparse starts. *Relative orientation is not the same as ancestry:* a descendant of an initially aligned tiling may acquire different square angles.
+
+The next experimental runner update uses **geometry-defined angle niches** within the existing novelty seats (normal 3/25; diversify 5/25, eligible only if relative-angle spread > 0.02 rad and L <= best + 0.45); all ancestry labels remain ignored. Structural relocation uses 70% **edge-contact guided** moves of one/two squares and 30% the existing uniform operator. Full SAT validation and local compression remain unchanged; the contact operator source is archived in `complete.zip`. Ten new/existing focused tests passed locally. An interrupted local smoke test retained five relatively oriented parents through generation ten; **no generation-30 or long-run improvement has yet been established**.
+
+Run a **new independent 30-generation** matched pilot, not 300 generations:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_geometry_niches.py" -v
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 30 --seed 2715 --output-dir results/fresh12-p25-geometryv4-pilot30
+```
+
+Diagnostics are in `run_summary.json` (including `structural_move_proposals`, `structural_move_valid_children`, `final_relative_orientation_parent_count` and `final_strong_relative_orientation_parent_count`), and `generations.jsonl`. See [fresh-start experiment notes](docs/FRESH_START_25.md).
+
