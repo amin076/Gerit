@@ -109,5 +109,12 @@ class StagnationTests(unittest.TestCase):
             self.assertLessEqual(report['best_side'],report['initial_best_side'])
             self.assertIn(report['best_individual_id'],[i['individual_id'] for i in final['selected_members']])
             self.assertEqual(len(list((output/'generation_images').glob('gen_*.png'))),5)
+            # Resume v3 input must inherit the prior idle counter and learned genes.
+            resumed=run(generations=1,seed=2702,directory=Path(tmp)/'resumed',
+                        source_file=output/'selected_population_final.json',
+                        make_zip=False,
+                        stagnation_settings=StagnationSettings(1,2,3,100.))
+            self.assertEqual(resumed['mode_generations'], {'diversify': 1})
+            self.assertEqual(resumed['proposals'],100)
 
 if __name__=='__main__': unittest.main()
