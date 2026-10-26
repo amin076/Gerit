@@ -1,21 +1,27 @@
-name: Phase 1 geometry checks
+name: Gerit Python tests
+
 on:
   push:
   pull_request:
+
 jobs:
-  geometry:
-    runs-on: ubuntu-latest
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install visualization dependency
-        run: python -m pip install Pillow
-      - name: Run geometry and config tests
+          cache: pip
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run geometry, learning, and continuation smoke tests
         run: python -m unittest discover -s tests -v
-      - name: Validate five-square experiment config
+      - name: Validate older five-square config
         run: python -m gerit --config configs/five-squares.json --dry-run
