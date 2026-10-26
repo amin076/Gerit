@@ -153,6 +153,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     # Generate and fully validate BEFORE allocating output directories.
     initial=make_fresh_population(squares,population,structural_seeds,seed)
     initial_kind={i+1:m.source for i,m in enumerate(initial)}
+    ancestry=dict(initial_kind)  # diagnostics only: NEVER used by selection
     pop=[(i+1,m.packing) for i,m in enumerate(initial)]
     grid=grid_bounds(squares)
     best_id,best=min(pop,key=lambda pair:(pair[1].container_side,pair[0]))
@@ -166,6 +167,11 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     next_id=population+1
     modes=Counter();stats=Counter();action_counts=Counter();mode_births=Counter();mode_valid=Counter()
     mode_checks=Counter();mode_record_events=Counter();mode_record_gain=Counter()
+    initial_origin_breakdown=dict(Counter(initial_kind.values()))
+    stochastic_initial_sides=[p.container_side for uid,p in pop
+                              if initial_kind[uid]!='connected_tiling']
+    competitive_stochastic_initial_count=sum(L<=grid.grid_upper_side+0.4
+                                               for L in stochastic_initial_sides)
     initial_metadata=[{'individual_id':uid,'source':initial_kind[uid],
                        'container_side':p.container_side,'squares':[asdict(x) for x in p.squares]}
                       for uid,p in pop]
@@ -179,6 +185,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             'population':population,'generations':generations,'offspring_per_parent':offspring_per_parent,
             'structural_initial_count':sum(m.source=='connected_tiling' for m in initial),
             'stochastic_initial_count':sum(m.source!='connected_tiling' for m in initial),
+            'initial_origin_breakdown':initial_origin_breakdown,
+            'competitive_stochastic_initial_count':competitive_stochastic_initial_count,
+            'competitive_stochastic_threshold_side':grid.grid_upper_side+0.4,
             'grid_upper_bound':grid.grid_upper_side,'area_lower_bound':grid.area_lower_side,
             'focused_cap':focused_cap,'cap_margin':cap_margin,
             'selection':'quality and competitive novelty only; source label ignored',
@@ -194,6 +203,11 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         row={'generation':g,'search_mode':mode,'best_side':best.container_side,
              'best_id':best_id,'population_best':min(p.container_side for _,p in pop),
              'selected_ids':[uid for uid,_ in pop],
+             'selected_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
+             'near_best_parent_count':sum(p.container_side<=best.container_side+0.05
+                                          for _,p in pop),
+             'rotated_parent_count':sum(any(abs(math.sin(2*s.angle))>1e-7
+                                            for s in p.squares) for _,p in pop),
              'stagnation_generations':g-stagnation.last_significant_generation,
              'rolling_window_gain':stagnation.window_gain,
              'weak_progress_streak':stagnation.weak_progress_streak,
@@ -245,6 +259,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                     mode_checks[mode]+=used_raw+used_comp
                     if valid:
                         stats['valid']+=1;generation_valid+=1;mode_valid[mode]+=1
+                        ancestry[next_id]=ancestry[uid]
                         children.append((next_id,candidate))
                     raw_gain=(parent.container_side-raw.container_side) if raw is not None else 0.0
                     final_gain=(parent.container_side-candidate.container_side) if valid else 0.0
@@ -303,6 +318,11 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'squares':squares,'population':population,'seed':seed,'offspring_per_parent':offspring_per_parent,
         'starting_structural_count':config['structural_initial_count'],
         'starting_stochastic_count':config['stochastic_initial_count'],
+        'initial_origin_breakdown':initial_origin_breakdown,
+        'competitive_stochastic_initial_count':competitive_stochastic_initial_count,
+        'final_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
+        'final_near_best_parent_count':sum(p.container_side<=best.container_side+0.05
+                                         for _,p in pop),
         'inherited_parents':0,'inherited_training':False,
         'initial_best_side':best_initial,'best_side':best.container_side,
         'improvement_after_initialization':best_initial-best.container_side,
@@ -330,6 +350,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'mode_geometry_checks','mode_record_events','mode_record_gain')},indent=2),encoding='utf-8')
     (directory/'selected_population_final.json').write_text(json.dumps({
        'generation':generations,'selected_members':[{'individual_id':uid,
+           'initial_ancestor_source':ancestry[uid],
            'container_side':p.container_side,'squares':[asdict(x) for x in p.squares],
            'policy':weights[uid]} for uid,p in pop],
        'global_policy':controller.global_policy,
@@ -340,7 +361,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     (directory/'best_result.json').write_text(json.dumps({'side':best.container_side,
          'individual_id':best_id,'squares':[asdict(x) for x in best.squares]},indent=2),encoding='utf-8')
     columns=['generation','best_side','population_best','search_mode','stagnation_generations',
-             'rolling_window_gain','weak_progress_streak','valid_children_this_gen',
+             'rolling_window_gain','weak_progress_streak','near_best_parent_count',
+             'rotated_parent_count','valid_children_this_gen',
              'proposals_cumulative','valid_children_cumulative','geometry_checks_cumulative','elapsed_seconds']
     with (directory/'generations.csv').open('w',newline='',encoding='utf-8') as f:
         writer=csv.DictWriter(f,fieldnames=columns);writer.writeheader()
@@ -359,7 +381,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
        f'{offspring_per_parent} children/parent; {stats["births"]} proposals overall.\n'
        f'Global grid L={grid.grid_upper_side} is constructed, not independently discovered.\n'
        f'Run: python scripts/run_fresh_25.py --squares {squares} --population {population} '
-       f'--generations {generations} --seed {seed} --output-dir <new directory>\n',encoding='utf-8')
+       f'--structural-seeds {structural_seeds} --offspring-per-parent {offspring_per_parent} '
+       f'--cap-margin {cap_margin} --generations {generations} --seed {seed} '
+       f'--output-dir <new directory>\n',encoding='utf-8')
     dependency_paths=[Path(__file__),ROOT/'gerit'/'fresh_population.py',
       ROOT/'gerit'/'connected_tilings.py',ROOT/'gerit'/'grid_bounds.py',
       ROOT/'gerit'/'geometry.py',ROOT/'gerit'/'selection.py',ROOT/'gerit'/'learning.py',
