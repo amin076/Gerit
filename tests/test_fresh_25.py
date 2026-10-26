@@ -6,10 +6,10 @@ from collections import Counter
 from pathlib import Path
 
 from gerit.fresh_population import make_fresh_population
-from gerit.geometry import validate_packing
+from gerit.geometry import validate_packing, Packing, Square
 from gerit.adaptive_v3 import StagnationSettings
 from gerit.adaptive_v4 import WindowSettings
-from scripts.run_fresh_25 import run, select_competitive_diverse
+from scripts.run_fresh_25 import run, select_competitive_diverse, relative_angle_spread
 
 class FreshRestartTests(unittest.TestCase):
     def test_new_population_is_25_and_source_independent(self):
@@ -35,6 +35,13 @@ class FreshRestartTests(unittest.TestCase):
         self.assertGreaterEqual(len(close),12)
         self.assertGreaterEqual(len(set(round(x.packing.container_side,5)
                                         for x in close)),10)
+        # A globally rotated grid has identical relative square angles, so
+        # 9 so-called rotated poses used to be no real orientational diversity.
+        # All 15 competitive new starters must now have genuine relative tilt.
+        self.assertEqual(sum(relative_angle_spread(m.packing)>0.01
+                             for m in random_members if m.source!='random_sparse'),15)
+        self.assertEqual(sum(relative_angle_spread(m.packing)>0.01
+                             for m in pop if m.source=='connected_tiling'),0)
         self.assertTrue(all(validate_packing(m.packing,tolerance=0.0).valid
                             for m in pop))
 
@@ -47,6 +54,12 @@ class FreshRestartTests(unittest.TestCase):
                 self.assertTrue(all(len(m.packing.squares)==n for m in pop))
         for args in ((0,25,7),(12,1,1),(12,25,25)):
             with self.assertRaises(ValueError):make_fresh_population(*args)
+
+    def test_relative_orientation_metric_ignores_rigid_global_rotation(self):
+        rigid=Packing((Square(.5,.5,.07),Square(1.5,.5,.07)),2.0)
+        different=Packing((Square(.5,.5,.07),Square(1.5,.5,-.07)),2.0)
+        self.assertAlmostEqual(relative_angle_spread(rigid),0.0)
+        self.assertGreater(relative_angle_spread(different),0.10)
 
     def test_label_independent_selection(self):
         pop=make_fresh_population()
@@ -78,9 +91,12 @@ class FreshRestartTests(unittest.TestCase):
             self.assertEqual(initial['learned_policy_initialization'],'fresh_zero')
             self.assertEqual(summary['initial_origin_breakdown']['random_rotated'],9)
             self.assertGreaterEqual(summary['competitive_stochastic_initial_count'],12)
+            self.assertEqual(summary['initial_relative_orientation_count'],18)
+            self.assertIn('final_relative_orientation_parent_count',summary)
             self.assertEqual(sum(summary['final_ancestry_counts'].values()),25)
             history=[json.loads(line) for line in (out/'generations.jsonl').read_text().splitlines()]
             self.assertEqual(history[0]['selected_ancestry_counts']['connected_tiling'],7)
+            self.assertEqual(history[0]['relative_orientation_parent_count'],18)
             self.assertEqual(sum(history[1]['selected_ancestry_counts'].values()),25)
             assert len(json.loads((out/'selected_population_final.json').read_text())['selected_members'])==25
             self.assertTrue(all('initial_ancestor_source' in m for m in
