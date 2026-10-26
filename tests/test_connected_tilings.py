@@ -80,6 +80,64 @@ class ConnectedTilingTests(unittest.TestCase):
             self.assertEqual(len([row for row in initial_log
                                   if row['initialization_origin']=='connected_tiling_seed']),3)
 
+    def test_seed_injection_resets_incompatible_rolling_history(self):
+        """Regression for Round21 -> Round22 (4.00499 -> constructed 4.0)."""
+        source=Path(__file__).resolve().parents[1] / 'data' / 'round15_selected_population_final.json'
+        with tempfile.TemporaryDirectory() as tmp:
+            folder=Path(tmp)
+            payload=json.loads(source.read_text(encoding='utf-8'))
+            old_best=min(float(m['container_side']) for m in payload['selected_members'])
+            self.assertGreater(old_best,4.0)
+            old_history=[old_best]*81
+            payload['stagnation_state']={
+                'reference_side':old_best,'last_significant_generation':50,
+                'elapsed_generations':100,
+                'progress':{'recent_best':old_history,'weak_progress_streak':20,
+                            'rolling_window_gain':0.0,'history_source':'v4_stored_state'}}
+            old_file=folder/'selected_population_final.json'
+            old_file.write_text(json.dumps(payload),encoding='utf-8')
+            with (folder/'generations.jsonl').open('w',encoding='utf-8') as f:
+                for g,value in enumerate(old_history):
+                    f.write(json.dumps({'generation':g,'best_side':value})+'\n')
+            result=run(generations=1,seed=2919,directory=folder/'seeded',
+                       make_zip=False,source_file=old_file,tiling_seeds=3)
+            self.assertEqual(result['initial_best_side'],4.0)
+            self.assertEqual(result['progress_reset_reason'],
+                             'constructive_seed_improved_initial_best')
+            self.assertEqual(result['mode_generations'],{'normal':1})
+            self.assertEqual(result['stagnation']['progress']['history_source'],
+                             'fresh_after_constructive_seed_injection')
+            self.assertEqual(json.loads((folder/'seeded'/'config.json').read_text())
+                             ['inherited_stagnation_idle'],0)
+            self.assertTrue(json.loads((folder/'seeded'/'verification.json').read_text())
+                            ['status']=='verified')
+            # Source is not modified, and its original progress history survives.
+            self.assertEqual(json.loads(old_file.read_text())['stagnation_state']
+                             ['progress']['recent_best'],old_history)
+
+    def test_unseeded_resume_keeps_previous_progress(self):
+        source=Path(__file__).resolve().parents[1] / 'data' / 'round15_selected_population_final.json'
+        with tempfile.TemporaryDirectory() as tmp:
+            folder=Path(tmp)
+            payload=json.loads(source.read_text(encoding='utf-8'))
+            old_best=min(float(m['container_side']) for m in payload['selected_members'])
+            payload['stagnation_state']={
+                'reference_side':old_best,'last_significant_generation':50,
+                'elapsed_generations':100,
+                'progress':{'recent_best':[old_best]*81,'weak_progress_streak':20,
+                            'rolling_window_gain':0.0}}
+            old_file=folder/'selected_population_final.json'
+            old_file.write_text(json.dumps(payload),encoding='utf-8')
+            result=run(generations=1,seed=2920,directory=folder/'no_seeds',
+                       make_zip=False,source_file=old_file,tiling_seeds=0)
+            self.assertIsNone(result['progress_reset_reason'])
+            self.assertEqual(result['progress_history_source'],'v4_stored_state')
+            self.assertEqual(result['mode_generations'],{'escape':1})
+            self.assertEqual(json.loads((folder/'no_seeds'/'config.json').read_text())
+                             ['inherited_stagnation_idle'],50)
+            self.assertTrue(json.loads((folder/'no_seeds'/'verification.json').read_text())
+                            ['status']=='verified')
+
     def test_invalid_parameters(self):
         for n in (0,-1,1.2):
             with self.assertRaises(ValueError):choose_tilings(n,3)
