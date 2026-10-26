@@ -34,6 +34,15 @@ from scripts.run_adaptive_tilings import GeometryCounter, geometry_check_shapely
 MODE_NAMES=('normal','precision','escape','diversify')
 
 
+def relative_angle_spread(packing: Packing) -> float:
+    """Largest relative square orientation mod pi/2 (global-rotation invariant)."""
+    angles=[s.angle for s in packing.squares]
+    period=math.pi/2
+    return max((abs((a-b+period/2)%period-period/2)
+                for i,a in enumerate(angles) for b in angles[i+1:]),
+               default=0.0)
+
+
 def _is_duplicate(a:Packing,b:Packing)->bool:
     return abs(a.container_side-b.container_side)<1e-8 and packing_distance(a,b)<1e-7
 
@@ -172,6 +181,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                               if initial_kind[uid]!='connected_tiling']
     competitive_stochastic_initial_count=sum(L<=grid.grid_upper_side+0.4
                                                for L in stochastic_initial_sides)
+    initial_relative_orientation_count=sum(relative_angle_spread(p)>0.01
+                                           for uid,p in pop)
     initial_metadata=[{'individual_id':uid,'source':initial_kind[uid],
                        'container_side':p.container_side,'squares':[asdict(x) for x in p.squares]}
                       for uid,p in pop]
@@ -187,6 +198,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             'stochastic_initial_count':sum(m.source!='connected_tiling' for m in initial),
             'initial_origin_breakdown':initial_origin_breakdown,
             'competitive_stochastic_initial_count':competitive_stochastic_initial_count,
+        'initial_relative_orientation_count':initial_relative_orientation_count,
             'competitive_stochastic_threshold_side':grid.grid_upper_side+0.4,
             'grid_upper_bound':grid.grid_upper_side,'area_lower_bound':grid.area_lower_side,
             'focused_cap':focused_cap,'cap_margin':cap_margin,
@@ -208,6 +220,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                                           for _,p in pop),
              'rotated_parent_count':sum(any(abs(math.sin(2*s.angle))>1e-7
                                             for s in p.squares) for _,p in pop),
+             'relative_orientation_parent_count':sum(relative_angle_spread(p)>0.01
+                                                     for _,p in pop),
              'stagnation_generations':g-stagnation.last_significant_generation,
              'rolling_window_gain':stagnation.window_gain,
              'weak_progress_streak':stagnation.weak_progress_streak,
@@ -320,7 +334,10 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
         'starting_stochastic_count':config['stochastic_initial_count'],
         'initial_origin_breakdown':initial_origin_breakdown,
         'competitive_stochastic_initial_count':competitive_stochastic_initial_count,
+        'initial_relative_orientation_count':initial_relative_orientation_count,
         'final_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
+        'final_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.01
+                                                     for _,p in pop),
         'final_near_best_parent_count':sum(p.container_side<=best.container_side+0.05
                                          for _,p in pop),
         'inherited_parents':0,'inherited_training':False,
