@@ -4,6 +4,7 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
+from gerit.adaptive_v3 import StagnationSettings
 from gerit.connected_tilings import choose_tilings
 from gerit.contact_relocation import propose_contact_relocate
 from gerit.fresh_population import make_fresh_population
@@ -48,6 +49,23 @@ class GeometryNicheTests(unittest.TestCase):
                     self.assertLessEqual(child.container_side,p.container_side+.5+1e-9)
                     successes.append(child)
             self.assertGreater(len(successes),0)
+
+    def test_accelerated_phases_really_sample_contact_moves(self):
+        # Unlike the normal 30-generation default pilot, this explicitly
+        # reaches escape and diversify without running a costly 130 generations.
+        with tempfile.TemporaryDirectory() as td:
+            report = run(seed=2715, generations=5, directory=Path(td)/'short',
+                         make_zip=False,
+                         stagnation_settings=StagnationSettings(1, 2, 3, 1e-6))
+            attempts=report['structural_move_proposals']
+            valid=report['structural_move_valid_children']
+            self.assertGreater(attempts.get('contact_guided',0),0)
+            self.assertGreater(attempts.get('uniform_relocate',0),0)
+            self.assertLessEqual(valid.get('contact_guided',0),attempts['contact_guided'])
+            self.assertLessEqual(valid.get('uniform_relocate',0),attempts['uniform_relocate'])
+            self.assertGreater(report['mode_generations'].get('escape',0),0)
+            self.assertGreater(report['mode_generations'].get('diversify',0),0)
+            self.assertTrue((Path(td)/'short'/'verification.json').exists())
 
     def test_one_generation_smoke_counts_guided(self):
         with tempfile.TemporaryDirectory() as td:
