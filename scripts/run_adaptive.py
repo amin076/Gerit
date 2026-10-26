@@ -239,8 +239,13 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
             # selection, near-duplicate filtering or ties discard its ID.
             topid,toppack=min(pop,key=lambda row:row[1].container_side)
             if toppack.container_side < best.container_side:
+                old_record=best.container_side
                 best_id,best=topid,toppack
-                print(f'NEW BEST gen={g} L={best.container_side:.12f}',flush=True)
+                if stagnation.reference_side-best.container_side >= stagnation.settings.significant_gain:
+                    print(f'MEANINGFUL NEW BEST gen={g} L={best.container_side:.12f} '
+                          f'gain={stagnation.reference_side-best.container_side:.9g}',flush=True)
+                else:
+                    counts['tiny_record_changes']+=1
             if best_id not in survivor_ids:
                 pop[-1]=(best_id,best)
                 survivor_ids={uid for uid,p in pop}
@@ -287,6 +292,7 @@ def run(generations:int=100, seed:int=DEFAULT_SEED,
         'best_individual_id':best_id,'elapsed_seconds':elapsed,
         'proposals':counts['births'],'valid_children':counts['valid'],
         'invalid_children':counts['births']-counts['valid'],
+        'tiny_record_changes':counts['tiny_record_changes'],
         'raw_improving_children':counts['raw_improving'],
         'final_improving_children':counts['final_improving'],
         'compression_improving_children':counts['comp_improving'],
