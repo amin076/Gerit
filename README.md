@@ -321,3 +321,19 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 
 Full protocol and output details: [Fresh start guide](docs/FRESH_START_25.md).
 
+### Follow-up after auditing the completed 300-generation archive (2026-10-27)
+
+The first independent seed-2715 run (`results/fresh12-p25-g300`) completed with **L=4**, 20,971 valid children out of 37,500, and no global improvement. Reconstructed ancestry showed **22 of 25 final parents** came from the initial seven connected tilings; the 18 stochastic starters were mostly far above the grid bound and disappeared immediately.
+
+**Fresh initialization v2:** the generator now starts most randomized geometries close to grid L using *multiple different connected silhouettes*, not just the canonical grid, with 9 rigidly tilted, 6 individually perturbed, and 3 broad sparse candidates for n=12, 25 parents, 7 structural seeds. Geometry and source-independent selection remain unchanged. A preflight with seed 2715 retained six stochastic lineages after generation one (versus three before); long-run performance has **not** yet been established.
+
+Every run now logs initial source breakdown and selected ancestry counts; selection **still ignores** source labels. The prior complete ZIP and its embedded code remain the scientific record of the old version. New runs must use a **new output directory**:
+
+```powershell
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 --generations 300 --seed 2715 --output-dir results/fresh12-p25-g300-initv2
+```
+
+Detailed ancestry audit: [Fresh start guide](docs/FRESH_START_25.md). Compare multiple matched seeds and geometric-check budgets before crediting gains to the modified initializer.
+
