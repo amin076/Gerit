@@ -261,3 +261,30 @@ py -3 scripts/run_adaptive_auto.py --input data/grid23.json --generations 100 --
 
 The grid initializer creates 20 labelled copies of the known valid grid, with neutral policy memory; other values such as `--squares 26` work too. **Do not** attribute the known grid's initial L to the evolutionary search. The previous `run_adaptive_v4.py` remains unchanged for reproducibility. See [design and limits](docs/GRID_AWARE_SEARCH.md).
 
+
+## Connected all-parallel tiling seeds — structured diversity
+
+A new **optional seed source** constructs edge-connected, axis-aligned groups of unit squares from positive row-width compositions. It works for arbitrary positive n, without fixing the row profiles to 12. For 12, feasible side-4 shapes include `4+4+4`, `4+4+3+1`, `4+4+2+2` and `4+3+3+2`. For 23, the grid-side bound is 5; for 26, it is 6. The shape bank can optionally allow wider connected variants using `--tiling-extra-side 1`.
+
+To **continue Round 21** from the actual inherited population, while adding **three constructive diversity seeds** and protecting the original unseeded evolutionary lineage:
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_connected_tilings.py" -v
+py -3 scripts/run_adaptive_tilings.py --input results/round21-adaptive-v4/selected_population_final.json --generations 300 --seed 2613 --output-dir results/round22-connected --tiling-seeds 3
+```
+
+Initial population: **17 inherited parents + 3 known constructive tilings**. Best original parent and global learned policy are retained; the best independent nonconstructive lineage remains archived and represented in breeding. `--tiling-seeds 0` disables injection. The generated layouts have all angles 0, unit-edge adjacency and rigorous valid geometry; subsequent evolutionary changes may rotate/move them. The v4 reward and rolling-window escape remain in use.
+
+**Important:** injecting known tilings for n=12 immediately makes the *overall* best side `L=4` at generation 0. **That is not an evolutionary discovery.** `run_summary.json` separately reports `evolved_baseline_before_seed_injection`, `best_unseeded_evolutionary_lineage`, `best_record_origin` and `constructive_initial_seed_count`, while per-person `constructive_ancestor` labels propagate across runs. The original imported population and the actual 20 starting genomes are both archived. With a seeded final population, use `--tiling-seeds 0` in the next run to avoid reinjecting known answers.
+
+For a **new study**, construct a diverse 23-square input, or substitute 26:
+
+```powershell
+py -3 scripts/make_tiling_population.py --squares 23 --output data/connected23.json
+py -3 scripts/run_adaptive_tilings.py --input data/connected23.json --tiling-seeds 0 --generations 100 --seed 2323 --output-dir results/connected23
+```
+
+Read [full details and scientific attribution notes](docs/CONNECTED_TILINGS.md). Prior auto/v4 runners remain unchanged and usable for fair unseeded controls; no new dependencies.
+
