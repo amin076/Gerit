@@ -354,3 +354,65 @@ the experimental artifact. This distinction matters for reproducibility.
 evaluations and a different fresh random seed. Comparing its best side to the
 earlier no-compression run does *not* by itself isolate the causal benefit of
 compression. A matched-budget, multi-seed controlled benchmark should follow.
+
+
+## Inherited probabilistic mutation learning (experimental)
+
+The new **`gerit/learning.py`** implements a lightweight contextual
+multiplicative-weights policy for rigid square packings. There are 10 movement
+families: translations on x/y, rotation, combined pose, nearest-neighbour
+relative movements, group translation/rotation/contraction, inward boundary
+movement, and tangential neighbour slides. Within each selected action,
+translation and rotation magnitudes are sampled **continuously** from a
+log-uniform distribution inside one of 3 learned probability-weighted ranges.
+Directional signs (x+/x−, y+/y−, clockwise/counterclockwise) are also learned.
+
+Each surviving child **inherits its parent's mutation-policy genes**, adjusted
+using the outcome of its own birth. An independent global policy is updated
+by both successful and failed proposals. A 14% exploration floor prevents any
+movement family from being eliminated. A contextual split based on packing
+density gives the memory some sensitivity to the state of the packing.
+
+The reward uses **child vs own parent** bounding-side reduction, not geometric
+validity alone. Direct reductions caused by mutation receive more credit than
+improvements attributable primarily to the subsequent local-compression stage.
+The policies, family probabilities and feedback events are serialized into
+the audit logs and the final population snapshot.
+
+```bash
+# Native Gerit evolutionary motor; keeps original default unchanged
+python -m gerit --config configs/five-squares.json --learning
+
+# For the controlled-start 12-square experimental runner see:
+# scripts/run_learning_pilot.py
+# scripts/run_frozen_ablation.py
+```
+
+### 12-square pilot: results and crucial limitation
+
+A real 20-generation, 100-parent **population restart** from the selected last
+generation of round 13 used 90 fitness/10 diversity and 1 proposal per parent,
+with the same initial 100 geometries and seed across three arms:
+
+| Arm | Final side L | SAT-valid offspring / 2000 | Local-compression trials |
+| --- | ---: | ---: | ---: |
+| Inherited, trained mutation policy | 4.100867969769 | 1787 | 62545 |
+| **Same new operator, frozen policy weights** | **4.078940461459** | 1741 | 60935 |
+| Prior coordinated mutation operator | 4.220659254542 | 330 | 11550 |
+
+**Interpretation:** The new proposal families and continuous step sampling
+are promising, but the trained policy did **not** beat the same operators
+with fixed probabilities in this trial. This is evidence that tuning the
+reward/credit assignment and doing larger multi-seed studies is essential,
+not evidence for a learning advantage. Each arm has only one seed, and
+**actual internal geometry-check budgets differ**. All sides remain above
+the straightforward L=4 grid construction for 12 squares.
+
+Code: `gerit/learning.py`; tests:
+`tests/test_learning.py`, `tests/test_learning_engine.py`;
+experiment/reproducibility:
+`scripts/run_learning_pilot.py` and
+`scripts/run_frozen_ablation.py`.
+The downloadable audit archive from the experiment contains every initial
+square configuration, 21 snapshots per arm, lineage, learned policy genome,
+validity evidence, and independent Shapely checks.
