@@ -477,8 +477,20 @@ if __name__=='__main__':
     parser.add_argument('--cap-margin',type=float,default=.15)
     parser.add_argument('--output-dir',type=Path,default=Path('results/fresh12-p25-g300'))
     parser.add_argument('--no-zip',action='store_true')
+    # Optional accelerated stagnation phases for short mechanism-only pilots.
+    # Production defaults remain 40/80/120, unchanged.
+    parser.add_argument('--precision-after',type=int,default=40,
+                        help='Idle generations before precision mode (default 40)')
+    parser.add_argument('--escape-after',type=int,default=80,
+                        help='Idle generations before structural escape (default 80)')
+    parser.add_argument('--diversify-after',type=int,default=120,
+                        help='Idle generations before broad diversification (default 120)')
     args=parser.parse_args()
+    phases=StagnationSettings(precision_after=args.precision_after,
+                               escape_after=args.escape_after,
+                               diversify_after=args.diversify_after)
     print(json.dumps(run(squares=args.squares,population=args.population,
          structural_seeds=args.structural_seeds,generations=args.generations,
          offspring_per_parent=args.offspring_per_parent,seed=args.seed,
-         cap_margin=args.cap_margin,directory=args.output_dir,make_zip=not args.no_zip),indent=2))
+         cap_margin=args.cap_margin,directory=args.output_dir,make_zip=not args.no_zip,
+         stagnation_settings=phases),indent=2))
