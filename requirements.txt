@@ -1,0 +1,5 @@
+# Run and visualize Gerit reward-v2 continuation (12 unit squares).
+# Python >= 3.10. Pip automatically installs transitive requirements (e.g. NumPy).
+Pillow>=10,<13
+matplotlib>=3.8,<4
+shapely>=2.0,<3
