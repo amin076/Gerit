@@ -273,3 +273,46 @@ py -3 scripts/run_fresh_25.py --squares 12 --population 25 --structural-seeds 7 
 
 Read each `run_summary.json` and compare rate of validity, selection, parent-relative gain, geometry checks, number of strong-orientation survivors, and best side. Note that different operators consume different numbers of random draws and checks; this is a matched-*configuration* test, **not a paired identical-candidate test**. Use multiple seeds / compute budgets before drawing robust conclusions, and do not equate simple validity with search quality. Prior directories remain untouched.
 
+## Selection repair after the 1000-generation, 20-parent image audit (2026-10-27)
+
+The completed independent 12-square/20-parent/1000-generation run reported **L=4.0**. The uploaded `gen_990.png` shows a large axis-aligned lattice family in the first two rows, and recurrent far-frontier solutions at roughly **L=6.32320** and **L=5.35774**. These are visual evidence of a *selection-behavior* issue, not geometric invalidity. Final reports showed 9/20 relatively tilted parents, 17/20 within L=4.05, and ancestry 18 connected-tiling plus 2 random-sparse.
+
+Structural operators, aggregated across the run (these are *different* from the number of improving newborns **selected**):
+
+| Operator | Attempts | Valid children | Children better than their own parent | Newborns selected |
+|---|---:|---:|---:|---:|
+| contact_guided | 38,084 | 19,830 | 3,859 | 102 |
+| uniform_relocate | 16,265 | 4,755 | 1,706 | 24 |
+
+A parent-relative improvement **does not necessarily beat the global record**, and the `selected_children` column includes any selected valid newborn, not exclusively improving newborns. To establish *which* improving newborns are selected, use the previously added `structural_move_selected_parent_improving_children` or the new cross-operator `selected_parent_improving_children` summary counter.
+
+### Revised origin-agnostic selection
+
+The runner now applies these geometric/merit rules (no inheritance and no ancestry quotas):
+
+1. **Exact lattice-family redundancy**: detect axis-parallel unit-cell lattices by actual square center spacing and orientation. Normally keep approximately 15% (3 of 20) as primary representatives when competitive non-grid alternatives exist. This is **not** a hard cap: if there are no valid alternatives, backfill from best available individuals, including lattice arrangements. The best available candidate is always retained.
+2. **Age-aware selection**: a selected UID surviving unchanged for 20 consecutive generations is stale. When competitive alternatives exist, normally let at most 20% (4 of 20) stale UIDs occupy the new population; the best-ever archive remains protected. This does not imply that an entire lineage stops making progress whenever its UID is old.
+3. **Parent-relative progress**: reserve approximately 20% (4 of 20) competitive selection opportunities for valid children improving their *own* parent, even if they still have L>4. These must pass geometry checks and quality/novelty scores; there are no guaranteed survival rights for every improving child.
+4. **Renewing deep frontier**: at most one place may admit an improving child still far above the best solution, if its parent-relative side reduction is at least 0.008 and the child side is no more than the current best + 3.0. A stagnant L~6 parent cannot retain this exception; an improving descendant can take its place and continue evolving.
+5. **Finite side penalty for exploration**: ordinary broad-novelty candidates are constrained to roughly best+1.15, rather than repeatedly spending seats on extreme L~6 configurations that have no measurable current progress.
+6. **Audit**: per-generation history/CSV now includes `axis_grid_parent_count`, `max_consecutive_parent_age`, `stale_20_parent_count`; the final summary reports `final_axis_grid_parent_count`, `final_max_consecutive_parent_age`, `final_stale_20_parent_count`, and `selected_parent_improving_children`. The full `individuals.jsonl` and `selection.jsonl` remain available.
+
+This is a **hypothesis-driven algorithm change**, not a demonstrated improvement in global packing quality. Six new regression/integration tests passed locally, including a synthetic 20-parent crowded grid-vs-tilted pool and two synthetic progressing L~5/L~6 children. Seven existing fresh-start tests also passed, as did separately run orientation and operator-ablation tests. The full combined Windows suite and a repeat 1000-generation search have **not** been verified.
+
+### New run (old files untouched)
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_progressive_selection.py" -v
+py -3 -m unittest discover -s tests -p "test_fresh_25.py" -v
+
+# First inspect selection behavior after the 20-generation aging threshold:
+py -3 scripts/run_fresh_25.py --squares 12 --population 20 --structural-seeds 6 --offspring-per-parent 5 --generations 100 --seed 2715 --contact-probability 0.70 --output-dir results/fresh12-p20-progress-v6-pilot100
+
+# The 1000-generation test is optional; do it only after reviewing the pilot:
+py -3 scripts/run_fresh_25.py --squares 12 --population 20 --structural-seeds 6 --offspring-per-parent 5 --generations 1000 --seed 2715 --contact-probability 0.70 --output-dir results/fresh12-p20-progress-v6-g1000
+```
+
+`generation_images/gen_010.png`, `gen_020.png` etc. are still produced by the run and can be displayed with the user's existing separate PowerShell 10-generation watcher. Do not run both commands in the same directory; old experimental artifacts are not loaded or deleted.
+
