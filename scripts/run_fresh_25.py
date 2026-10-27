@@ -48,77 +48,191 @@ def _is_duplicate(a:Packing,b:Packing)->bool:
     return abs(a.container_side-b.container_side)<1e-8 and packing_distance(a,b)<1e-7
 
 
-def select_competitive_diverse(pool:list[tuple[int,Packing]], number:int,
-                               mode:str)->list[tuple[int,Packing]]:
-    """Unlabelled competition: quality, near-best novelty, broad novelty.
+def is_axis_grid_lattice(packing: Packing, tolerance: float = 0.002) -> bool:
+    """A true axis-parallel unit-cell layout, independent of lattice origin.
 
-    No preference by seed origin or ancestry. Fast deterministic farthest-first
-    selection with graded side penalty rather than unconstrained diversity.
+    This is a geometrical property, NOT the ancestor's source label. It does
+    not classify a tilted or continuously displaced packing as a grid.
     """
-    if mode not in MODE_NAMES: raise ValueError(f'Unknown mode {mode}')
-    ordered=sorted(pool,key=lambda item:(item[1].container_side,item[0]))
-    unique=[]
-    equivalent=[]
+    if not packing.squares:
+        return False
+    if any(abs((sq.angle + math.pi / 4) % (math.pi / 2) - math.pi / 4) > tolerance
+           for sq in packing.squares):
+        return False
+    x0, y0 = packing.squares[0].x, packing.squares[0].y
+    return all(abs((sq.x-x0)-round(sq.x-x0)) <= tolerance and
+               abs((sq.y-y0)-round(sq.y-y0)) <= tolerance
+               for sq in packing.squares)
+
+
+def select_competitive_diverse(pool: list[tuple[int, Packing]], number: int,
+                               mode: str, *,
+                               incumbent_ages: dict[int, int] | None = None,
+                               parent_gains: dict[int, float] | None = None
+                               ) -> list[tuple[int, Packing]]:
+    """Fitness, geometrical redundancy control and parent-relative progress.
+
+    Identity/source/ancestry are never a fitness feature. A new child that
+    improves its parent can compete for progression seats even when it does
+    not beat the population record. Unproductive huge frontiers cannot occupy
+    seats indefinitely merely because their coordinates are far apart.
+    When there are no viable alternatives the quotas are relaxed rather than
+    selecting fewer than `number` parents.
+    """
+    if mode not in MODE_NAMES:
+        raise ValueError(f'Unknown mode {mode}')
+    if number < 1 or not pool:
+        raise ValueError('Expected positive population and nonempty pool')
+    ages = incumbent_ages or {}
+    gains = parent_gains or {}
+    ordered = sorted(pool, key=lambda entry: (entry[1].container_side, entry[0]))
+    unique = []
+    equivalent = []
     for entry in ordered:
-        if any(_is_duplicate(entry[1],e[1]) for e in unique):
+        if any(_is_duplicate(entry[1], old[1]) for old in unique):
             equivalent.append(entry)
         else:
             unique.append(entry)
-    if not unique:raise ValueError('Cannot select from empty candidate pool')
-    # 25 => 16/7/2 in normal; 13/9/3 in deep exploration.
-    quality_n=round(number*(.52 if mode=='diversify' else .64))
-    frontier_n=round(number*(.12 if mode=='diversify' else .08))
-    near_n=number-quality_n-frontier_n
-    chosen=unique[:quality_n]
-    remain=unique[quality_n:]
-    best_L=unique[0][1].container_side
-    def take_one(explore:bool):
-        if not remain:return False
-        # Encourage novelty, but prevent all diversity slots being wasted on
-        # needlessly huge squares (the failure seen in Round 22).
-        candidate_ids=list(range(len(remain)))
-        if not explore:
-            restricted=[i for i in candidate_ids if remain[i][1].container_side<=best_L+0.55]
-            if restricted:candidate_ids=restricted
-        penalty=.06 if explore else .55
-        def score(i):
-            uid,packing=remain[i]
-            novelty=min((packing_distance(packing,x[1]) for x in chosen), default=0.0)
-            return (novelty-penalty*max(0.0,packing.container_side-best_L),
-                    -packing.container_side,-uid)
-        idx=max(candidate_ids,key=score)
-        chosen.append(remain.pop(idx));return True
-    # A small geometry-defined orientation niche guards against a 4x4
-    # aligned grid monopolizing the entire near-best diversity frontier.
-    # This is NOT a quota for random/stochastic *ancestry*: a tilted child
-    # of a grid seed qualifies identically to a tilted stochastic child.
-    # Only packings close to the best side are eligible; candidates still
-    # compete on novelty and fitness, and unused slots revert to open novelty.
-    target_angled = round(number*(.20 if mode=='diversify' else .12))
-    angled_count=sum(relative_angle_spread(p)>0.02 for _,p in chosen)
-    reserved=0
-    while reserved<near_n and angled_count<target_angled:
-        options=[i for i,(_,p) in enumerate(remain)
-                 if p.container_side<=best_L+0.45 and relative_angle_spread(p)>0.02]
-        if not options:break
-        idx=max(options,key=lambda i:(
-            min((packing_distance(remain[i][1],x[1]) for x in chosen), default=0.)
-            - .32*(remain[i][1].container_side-best_L),
-            relative_angle_spread(remain[i][1]),
-            -remain[i][1].container_side,-remain[i][0]))
-        chosen.append(remain.pop(idx))
-        reserved+=1;angled_count+=1
-    for _ in range(near_n-reserved):
-        if not take_one(False):break
-    for _ in range(frontier_n):
-        if not take_one(True):break
-    # If novelty ran out, use remaining actual distinct individuals first.
-    for entry in (*remain,*equivalent):
-        if len(chosen)>=number:break
-        chosen.append(entry)
-    while len(chosen)<number:
-        chosen.append(unique[len(chosen)%len(unique)])
-    return chosen[:number]
+    best_side = unique[0][1].container_side
+    selected = [unique[0]]  # unconditional best-available elite
+    remaining = unique[1:]
+    grid_limit = max(2, round(.15 * number))
+    stale_after = 20
+    stale_limit = max(2, round(.20 * number))
+    grid_count = int(is_axis_grid_lattice(unique[0][1]))
+
+    def eligible_indices(side_margin: float, *, grid_exempt: bool = False) -> list[int]:
+        options = [i for i, (_, p) in enumerate(remaining)
+                   if p.container_side <= best_side + side_margin]
+        if sum(ages.get(uid, 0) >= stale_after for uid, _ in selected) >= stale_limit:
+            fresh = [i for i in options if ages.get(remaining[i][0], 0) < stale_after]
+            if fresh:
+                options = fresh
+        if not grid_exempt and grid_count >= grid_limit:
+            nongrid = [i for i in options if not is_axis_grid_lattice(remaining[i][1])]
+            if nongrid:
+                options = nongrid
+        return options
+
+    def append_at(i: int):
+        nonlocal grid_count
+        item = remaining.pop(i)
+        selected.append(item)
+        grid_count += int(is_axis_grid_lattice(item[1]))
+
+    def novelty(pack: Packing) -> float:
+        return min(packing_distance(pack, chosen[1]) for chosen in selected)
+
+    # Preserve quality but stop *identical lattice mechanism* from filling the
+    # first 10-13 seats. Aged unchanged parents pay a small selection cost;
+    # the archived true global best is never sacrificed.
+    quality_count = round(number * (.42 if mode == 'diversify' else .50))
+    for _ in range(1, quality_count):
+        options = eligible_indices(.65)
+        if not options:
+            break
+        idx = min(options, key=lambda i: (
+            remaining[i][1].container_side + .004 * min(1., ages.get(remaining[i][0], 0) / 15.),
+            ages.get(remaining[i][0], 0), remaining[i][0]))
+        append_at(idx)
+
+    # Genetically *improving* but not yet globally best children are a
+    # legitimate long-run frontier. This is based on immediate parent gain,
+    # never on origin. Parents do not receive credit for an unselected child.
+    progress_count = max(1, round(number * .20))
+    for _ in range(progress_count):
+        options = [i for i in eligible_indices(1.35)
+                   if gains.get(remaining[i][0], 0.0) > 1e-8]
+        if not options:
+            break
+        idx = max(options, key=lambda i: (
+            .7 * novelty(remaining[i][1])
+            + 1.4 * min(.18, gains.get(remaining[i][0], 0.0))
+            - .34 * (remaining[i][1].container_side - best_side),
+            gains.get(remaining[i][0], 0.0), -remaining[i][1].container_side,
+            -remaining[i][0]))
+        append_at(idx)
+
+    # One renewing deep-frontier seat allows a distant *improving child* to
+    # replace a very open parent and advance across multiple generations.
+    # The L~6 static packing itself gets no credit. Only a measurable new
+    # parent-relative improvement qualifies; at most one seat is risked.
+    if len(selected) < number and number >= 8:
+        deep_progress = [i for i, (uid, p) in enumerate(remaining)
+                         if best_side + 1.35 < p.container_side <= best_side + 3.0
+                         and gains.get(uid, 0.0) >= .008]
+        if deep_progress:
+            idx = max(deep_progress, key=lambda i: (
+                min(.5, gains.get(remaining[i][0], 0.0))
+                + .12 * novelty(remaining[i][1])
+                - .06 * (remaining[i][1].container_side - best_side),
+                -remaining[i][1].container_side, -remaining[i][0]))
+            append_at(idx)
+
+    # Rotation is a geometric niche, not a mandatory quota for a lineage.
+    angle_target = round(number * (.30 if mode == 'diversify' else .23))
+    while len(selected) < number and sum(relative_angle_spread(p) > .02 for _, p in selected) < angle_target:
+        options = [i for i in eligible_indices(.55)
+                   if relative_angle_spread(remaining[i][1]) > .02]
+        if not options:
+            break
+        idx = max(options, key=lambda i: (
+            novelty(remaining[i][1]) - .45 * (remaining[i][1].container_side-best_side)
+            - .025 * min(1., ages.get(remaining[i][0], 0) / 30.),
+            -remaining[i][1].container_side, -remaining[i][0]))
+        append_at(idx)
+
+    # Competitive novelty remains, with a finite price on side length. The
+    # earlier 0.06 frontier penalty selected L=5-6 for an L=4 baseline.
+    broad_seats = max(1, round(number * (.10 if mode == 'diversify' else .05)))
+    while len(selected) < number - broad_seats:
+        options = eligible_indices(.85)
+        if not options:
+            break
+        idx = max(options, key=lambda i: (
+            novelty(remaining[i][1]) - .46 * (remaining[i][1].container_side-best_side)
+            - .04 * min(1., ages.get(remaining[i][0], 0) / 30.),
+            gains.get(remaining[i][0], 0.0), -remaining[i][1].container_side,
+            -remaining[i][0]))
+        append_at(idx)
+
+    # One or two broad seats: a significantly improving child can climb up
+    # from a distant packing (up to +1.65), but stagnant L~6 parents no
+    # longer survive solely as extreme outliers. Still allow +1.15 for
+    # candidates with no measured progress.
+    for _ in range(min(broad_seats, number - len(selected))):
+        options = [i for i, (_, p) in enumerate(remaining)
+                   if p.container_side <= best_side + 1.15 or
+                   (p.container_side <= best_side + 1.65 and
+                    gains.get(remaining[i][0], 0.0) >= .025)]
+        if sum(ages.get(uid, 0) >= stale_after for uid, _ in selected) >= stale_limit:
+            fresh = [i for i in options if ages.get(remaining[i][0], 0) < stale_after]
+            if fresh:
+                options = fresh
+        if grid_count >= grid_limit:
+            nongrid = [i for i in options if not is_axis_grid_lattice(remaining[i][1])]
+            if nongrid:
+                options = nongrid
+        if not options:
+            break
+        idx = max(options, key=lambda i: (
+            novelty(remaining[i][1]) - .38 * (remaining[i][1].container_side-best_side)
+            + .6 * min(.2, gains.get(remaining[i][0], 0.0))
+            - .05 * min(1., ages.get(remaining[i][0], 0) / 20.),
+            -remaining[i][1].container_side, -remaining[i][0]))
+        append_at(idx)
+
+    # Never lower the population count if competitive novelty is exhausted.
+    # Backfill from near-best individuals before extreme outliers. Only then
+    # use geometrically equivalent but UID-distinct parents.
+    for entry in sorted([*remaining, *equivalent],
+                        key=lambda x: (x[1].container_side, ages.get(x[0], 0), x[0])):
+        if len(selected) >= number:
+            break
+        selected.append(entry)
+    if len(selected) < number:
+        raise ValueError(f'Only {len(selected)} distinct IDs for {number} parents')
+    return selected[:number]
 
 
 def _progress(path:Path,history:list[dict],reference:float)->None:
@@ -212,6 +326,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
     structural_parent_improving=Counter();structural_selected_parent_improving=Counter()
     structural_checks=Counter()
     structural_selected_strong_angles=Counter()
+    survivor_ages={uid:0 for uid,_ in pop}
+    total_selected_parent_improvements=0
     initial_origin_breakdown=dict(Counter(initial_kind.values()))
     stochastic_initial_sides=[p.container_side for uid,p in pop
                               if initial_kind[uid]!='connected_tiling']
@@ -238,7 +354,15 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             'competitive_stochastic_threshold_side':grid.grid_upper_side+0.4,
             'grid_upper_bound':grid.grid_upper_side,'area_lower_bound':grid.area_lower_side,
             'focused_cap':focused_cap,'cap_margin':cap_margin,
-            'selection':'quality, near-best geometric angle niches and novelty; source label ignored',
+            'selection':'geometry-only lattice redundancy control, parent-progress seats, angle/fitness novelty, source labels ignored',
+            'axis_grid_family_primary_limit':max(2,round(.15*population)),
+            'parent_progress_target':max(1,round(.20*population)),
+            'deep_progress_renewing_slots':1 if population>=8 else 0,
+            'deep_progress_min_parent_gain':.008,
+            'deep_progress_max_above_best':3.0,
+            'stale_parent_after_generations':20,
+            'stale_parent_target_limit':max(2,round(.20*population)),
+            'broad_exploration_cap_above_best':1.15,
             'orientation_niche_threshold_radians':0.02,
             'orientation_niche_max_above_best_side':0.45,
             'orientation_niche_target_normal':round(.12*population),
@@ -258,6 +382,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
              'best_id':best_id,'population_best':min(p.container_side for _,p in pop),
              'selected_ids':[uid for uid,_ in pop],
              'selected_ancestry_counts':dict(Counter(ancestry[uid] for uid,_ in pop)),
+             'axis_grid_parent_count':sum(is_axis_grid_lattice(p) for _,p in pop),
+             'max_consecutive_parent_age':max(survivor_ages.values(),default=0),
+             'stale_20_parent_count':sum(x>=20 for x in survivor_ages.values()),
              'near_best_parent_count':sum(p.container_side<=best.container_side+0.05
                                           for _,p in pop),
              'strong_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.02
@@ -289,6 +416,7 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             mode=stagnation.mode(generation-1)
             old=list(pop);children=[];previous_record=best.container_side
             generation_birth_operator={}  # valid structural offspring only
+            generation_parent_gains={}  # every valid newborn, not only structural
             generation_birth_parent_improvement={}  # endpoint L < parent L
             generation_valid=0
             for uid,parent in old:
@@ -326,7 +454,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                     raw_gain=(parent.container_side-raw.container_side) if raw is not None else 0.0
                     final_gain=(parent.container_side-candidate.container_side) if valid else 0.0
                     if valid and raw_gain>1e-8:stats['raw_improving']+=1
-                    if valid and final_gain>1e-8:stats['final_improving']+=1
+                    if valid and final_gain>1e-8:
+                        stats['final_improving']+=1
+                        generation_parent_gains[next_id]=final_gain
                     if valid and compression_gain>1e-8:stats['compression_improving']+=1
                     action_counts[meta['action']]+=1
                     move_operator = ('contact_guided' if meta.get('move_strategy')=='contact_guided'
@@ -354,7 +484,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                         'feedback':feedback,'mode':mode})
                     next_id+=1
             pool=old+children
-            selected=select_competitive_diverse(pool,population,mode)
+            selected=select_competitive_diverse(
+                pool,population,mode,incumbent_ages=survivor_ages,
+                parent_gains=generation_parent_gains)
             topid,toppack=min(selected,key=lambda item:(item[1].container_side,item[0]))
             if toppack.container_side<best.container_side:
                 best_id,best=topid,toppack
@@ -363,7 +495,9 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
             if best_id not in {uid for uid,_ in selected}:
                 selected[-1]=(best_id,best)
             pop=selected
+            survivor_ages={uid:survivor_ages.get(uid,0)+1 for uid,_ in pop}
             survivors={uid for uid,_ in pop}
+            total_selected_parent_improvements+=sum(uid in generation_parent_gains for uid in survivors)
             for uid,p in pop:
                 op=generation_birth_operator.get(uid)
                 if op is not None:
@@ -408,6 +542,10 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
                                                      for _,p in pop),
         'final_strong_relative_orientation_parent_count':sum(relative_angle_spread(p)>0.02
                                                             for _,p in pop),
+        'final_axis_grid_parent_count':sum(is_axis_grid_lattice(p) for _,p in pop),
+        'final_max_consecutive_parent_age':max(survivor_ages.values(),default=0),
+        'final_stale_20_parent_count':sum(x>=20 for x in survivor_ages.values()),
+        'selected_parent_improving_children':total_selected_parent_improvements,
         'final_near_best_parent_count':sum(p.container_side<=best.container_side+0.05
                                          for _,p in pop),
         'inherited_parents':0,'inherited_training':False,
@@ -457,7 +595,8 @@ def run(*,squares:int=12,population:int=25,generations:int=300,
          'individual_id':best_id,'squares':[asdict(x) for x in best.squares]},indent=2),encoding='utf-8')
     columns=['generation','best_side','population_best','search_mode','stagnation_generations',
              'rolling_window_gain','weak_progress_streak','near_best_parent_count',
-             'rotated_parent_count','relative_orientation_parent_count',
+             'rotated_parent_count','axis_grid_parent_count','max_consecutive_parent_age','stale_20_parent_count',
+             'relative_orientation_parent_count',
              'strong_relative_orientation_parent_count','valid_children_this_gen',
              'proposals_cumulative','valid_children_cumulative','geometry_checks_cumulative','elapsed_seconds']
     with (directory/'generations.csv').open('w',newline='',encoding='utf-8') as f:
