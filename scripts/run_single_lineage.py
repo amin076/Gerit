@@ -23,6 +23,7 @@ from gerit.adaptive_v4 import AdaptiveCreditController, normalize_policy, propos
 from gerit.learning import propose_learned
 from gerit.contact_relocation import propose_contact_relocate
 from gerit.local_compression import CompressionSettings, compress_valid
+from scripts.run_adaptive_tilings import GeometryCounter
 
 COLORS = ('#6699cc','#6fba96','#eeb76b','#b494d5','#db8593',
           '#b5bf77','#77b9c2','#bbafa0','#d9aa70','#a1a0df',
@@ -99,7 +100,7 @@ def run(args):
     accepted_total = valid_total = improving_total = 0
     stalled = 0
     start = time.perf_counter()
-    with (output/'trajectory.jsonl').open('w',encoding='utf-8') as log:
+    with GeometryCounter() as gate, (output/'trajectory.jsonl').open('w',encoding='utf-8') as log:
         for step in range(1,args.steps+1):
             before=parent.container_side
             winner = None
@@ -111,6 +112,8 @@ def run(args):
                      'precision' if stalled < 80 else
                      'escape' if stalled < 120 else 'diversify')
             for index in range(1,args.children+1):
+                raw_before, comp_before = gate.raw, gate.comp
+                gate.phase = 'raw'
                 cap = parent.container_side + args.cap_margin
                 roll = rng.random()
                 if modes == 'precision' and roll < .55:
@@ -125,14 +128,16 @@ def run(args):
                     raw,meta = propose_learned(parent,rng,cap,policy,controller)
                 candidate=raw
                 compression_gain=0.0
+                gate.phase = 'comp'
                 if raw is not None:
                     candidate,_=compress_valid(raw,rng,compressor,cap)
                     compression_gain=raw.container_side-candidate.container_side
+                raw_checks, comp_checks = gate.raw-raw_before, gate.comp-comp_before
                 valid=candidate is not None and validate_packing(candidate,tolerance=0.0).valid
                 raw_gain=parent.container_side-raw.container_side if raw is not None else 0.0
                 child_policy,_=controller.update(
                     policy,meta,valid,raw_gain,compression_gain,before,
-                    0,0,global_best_side=before,train=True)
+                    raw_checks,comp_checks,global_best_side=before,train=True)
                 if valid:
                     valid_count += 1
                     gain = before - candidate.container_side
@@ -185,6 +190,7 @@ def run(args):
                'accepted_steps':accepted_total,'stalled_steps':args.steps-accepted_total,
                'valid_children':valid_total,'improving_children':improving_total,
                'proposals':args.steps*args.children,
+               'raw_geometry_checks':gate.raw,'compression_geometry_checks':gate.comp,
                'video_file':'lineage.mp4' if not args.no_video else None,
                'final_geometry_valid':validate_packing(parent,tolerance=0.0).valid,
                'elapsed_seconds_without_encoding':time.perf_counter()-start}
