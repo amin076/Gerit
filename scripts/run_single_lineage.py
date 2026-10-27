@@ -86,6 +86,40 @@ def render(path: Path, packing: Packing, initial_side: float, step: int,
     image.save(path)
 
 
+
+def render_competition(path: Path, branches: list[dict], archive: Packing,
+                       initial_side: float, step: int, total: int) -> None:
+    """Show every active temporary branch in the video rather than hiding rivals."""
+    image=Image.new('RGB',(800,800),'#f9fafb')
+    draw=ImageDraw.Draw(image)
+    draw.text((25,15),f'Gerit | branch competition | step {step}/{total}',fill='#18212d')
+    draw.text((25,37),f'Protected best L={archive.container_side:.10f}',fill='#18212d')
+    cols=2
+    rows=math.ceil(len(branches)/cols)
+    cell_w=390
+    cell_h=min(330,(720//rows))
+    for i,branch in enumerate(branches):
+        p=branch['packing']
+        ox=15+(i%cols)*395
+        oy=70+(i//cols)*cell_h
+        draw.rectangle((ox,oy,ox+cell_w-8,oy+cell_h-6),
+                       outline='#98a5b6',width=2)
+        draw.text((ox+10,oy+8),f'Branch {branch["id"]+1}  L={p.container_side:.9f}',
+                  fill='#18212d')
+        space=min(cell_w-40,cell_h-62)
+        scale=space/(initial_side+.2)
+        bx=ox+14
+        by=oy+cell_h-21
+        def to_xy(x,y):
+            return (round(bx+x*scale),round(by-y*scale))
+        draw.rectangle((*to_xy(0,p.container_side),
+                        *to_xy(p.container_side,0)),outline='#344455',width=2)
+        for j,sq in enumerate(p.squares):
+            pts=[to_xy(x,y) for x,y in square_vertices(sq)]
+            draw.polygon(pts,fill=COLORS[j%len(COLORS)])
+            draw.line(pts+[pts[0]],fill='#263445',width=1)
+    image.save(path)
+
 def _distance(a: Packing, b: Packing) -> float:
     """Compare actual poses, not just the enclosing sides."""
     from gerit.selection import packing_distance
@@ -310,8 +344,12 @@ def run(args):
             rows.append(record)
             log.write(json.dumps(record)+'\n')
             log.flush()
-            render(frames/f'frame_{step:04d}.png',parent,initial_side,step,
-                   args.steps,max(0.,before-archive.container_side),accepted_count>0)
+            if branches is not None:
+                render_competition(frames/f'frame_{step:04d}.png',branches,archive,
+                                   initial_side,step,args.steps)
+            else:
+                render(frames/f'frame_{step:04d}.png',parent,initial_side,step,
+                       args.steps,max(0.,before-archive.container_side),accepted_count>0)
             if step==1 or step%50==0 or event:
                 print(f'STEP {step}/{args.steps} best={archive.container_side:.12f} '
                       f'phase={record["phase"]} branches={record["branch_count"]} '
