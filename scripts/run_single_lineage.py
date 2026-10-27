@@ -32,6 +32,18 @@ COLORS = ('#6699cc','#6fba96','#eeb76b','#b494d5','#db8593',
 
 def load_start(args):
     """Read a real saved survivor OR make a new non-grid starting parent."""
+    if args.resume_packing:
+        source = json.loads(Path(args.resume_packing).read_text(encoding='utf-8'))
+        if not all(k in source for k in ('squares','container_side')):
+            raise ValueError('resume-packing needs container_side and squares')
+        packing = Packing(tuple(Square(**sq) for sq in source['squares']),
+                          float(source['container_side']))
+        provenance = {'kind':'resumed_final_packing',
+                      'file':str(Path(args.resume_packing).resolve()),
+                      'initial_side':packing.container_side,
+                      'policy_inherited':source.get('policy') is not None,
+                      'global_policy_inherited':source.get('global_policy') is not None}
+        return packing, source.get('policy'), source.get('global_policy'), provenance
     if args.input:
         source = json.loads(Path(args.input).read_text(encoding='utf-8'))
         members = source['selected_members']
@@ -179,13 +191,15 @@ def run(args):
         writer.writeheader()
         writer.writerows(rows)
     final = {'container_side':parent.container_side,
-             'squares':[asdict(s) for s in parent.squares],'policy':policy}
+             'squares':[asdict(s) for s in parent.squares],
+             'policy':policy,'global_policy':controller.global_policy}
     (output/'final_packing.json').write_text(json.dumps(final,indent=2),encoding='utf-8')
     summary = {'experiment':'single_lineage_strict_improvement',
                'starting_parent':provenance,'seed':args.seed,'steps':args.steps,
                'children_per_step':args.children,'fps':args.fps,
                'video_duration_seconds':args.steps/args.fps,
                'starting_side':initial_side,'best_side':parent.container_side,
+               'continuation_limitation':('Past RNG and adaptive controller statistics are not included in old final_packing.json; resumed runs preserve geometry and parent policy, but initialize missing global state.' if args.resume_packing else None),
                'total_gain':initial_side-parent.container_side,
                'accepted_steps':accepted_total,'stalled_steps':args.steps-accepted_total,
                'valid_children':valid_total,'improving_children':improving_total,
@@ -221,7 +235,10 @@ def run(args):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--input',type=Path,help='Previous selected_population_final.json (optional)')
+    sources=parser.add_mutually_exclusive_group()
+    sources.add_argument('--input',type=Path,help='Previous selected_population_final.json (optional)')
+    sources.add_argument('--resume-packing',type=Path,
+                         help='Previous single-lineage final_packing.json; restores geometry and parent policy')
     parser.add_argument('--parent-rank',type=int,default=19,
                         help='0=best imported parent, 19=worst among 20 (default 19)')
     parser.add_argument('--squares',type=int,default=12)
