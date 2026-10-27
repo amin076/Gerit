@@ -407,3 +407,20 @@ py -3 scripts/run_fresh_25.py --generations 30 --seed 2715 --precision-after 5 -
 
 See [detailed experiment design](docs/FRESH_START_25.md). Short pilots alone do not establish improved packing quality or global optimality.
 
+### Progressive selection after the 20-parent, 1000-generation image audit
+
+`gen_990.png` revealed a repeated group of axis-aligned L=4 tilings and two mostly open frontier packings near L=5.36 and 6.32. The previous selector gave too many seats to geometrically similar elite grids while the broad novelty term could keep far, unproductive parents. A child reducing **its own parent's** L was not explicitly credited in selection unless it happened to score well in the pre-existing global quality/novelty seats.
+
+**Selection v6** (source-independent, deterministic): only ~3/20 primary seats for exact axis-parallel unit-cell geometries *when enough competing non-grid geometries exist*; strong aging pressure after 20 consecutive generations without UID turnover (~4/20 stagnant incumbents when replacements are available); ~4/20 progress seats for children improving their own parent; a single **renewing** deep-progress opportunity that only an actually improving far child can use; finite side penalties prevent L~6 stagnation. The elite best-known side is protected and strict geometry checks are unchanged. The limits are relaxed only to fill the population when candidate supply is insufficient.
+
+Added `tests/test_progressive_selection.py` (6 tests passed locally), and per-generation/final diagnostics for lattice occupancy, UID age and selected parent-improving children. Existing seven fresh-start tests passed; full Windows CI and a new 1000-generation record have not been verified.
+
+```powershell
+cd C:\Physics\Gerit
+git pull --ff-only
+py -3 -m unittest discover -s tests -p "test_progressive_selection.py" -v
+py -3 scripts/run_fresh_25.py --squares 12 --population 20 --structural-seeds 6 --offspring-per-parent 5 --generations 100 --seed 2715 --contact-probability 0.70 --output-dir results/fresh12-p20-progress-v6-pilot100
+```
+
+After this 100-generation selection diagnostic, an optional separate `--generations 1000` run can use `--output-dir results/fresh12-p20-progress-v6-g1000`. Older 1000-generation outputs remain untouched. [Rationale, audit and test design](docs/FRESH_START_25.md).
+
