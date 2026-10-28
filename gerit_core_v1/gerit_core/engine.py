@@ -103,6 +103,8 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
+        self.operator_stats = {name: {"calls":0,"seconds":0.0,"valid":0,"improved":0}
+                               for name in operators}
         self.evaluations = 0
         self.generation = 0
         self.best = None
@@ -180,8 +182,15 @@ class Search:
         floor = self.cfg.exploration_floor
         probs = [(1-floor)*self.weights[n]/total + floor/len(names) for n in names]
         name = self.rng.choices(names, weights=probs, k=1)[0]
+        t0=time.perf_counter()
         state = self.operators[name](deepcopy(parent.state), self.rng, intensity)
+        self.operator_stats[name]["seconds"] += time.perf_counter()-t0
+        self.operator_stats[name]["calls"] += 1
         child = self._eval(state)
+        if child is not None:
+            self.operator_stats[name]["valid"] += 1
+            if child.score < parent.score:
+                self.operator_stats[name]["improved"] += 1
         if child is not None:
             self._remember(child)
         reward = 1.0 if child is not None and child.score < parent.score else 0.0
@@ -332,6 +341,7 @@ class Search:
                          "trend":sum(p.progress)/max(1,len(p.progress))}
                         for p in self.parents],
             "operator_weights": self.weights,
+            "operator_stats":self.operator_stats,
             "last_event": self.events[-1] if self.events else None,
         })
 
@@ -406,6 +416,7 @@ class Search:
                     "settings":asdict(cfg),"generation":self.generation,
                     "evaluations":self.evaluations,
                     "best_objective":self._objective(self.best.score),
-                    "population":len(self.parents),"events":self.events})
+                    "population":len(self.parents),"events":self.events,
+                    "operator_stats":self.operator_stats})
         return Result(deepcopy(self.best.state),self._objective(self.best.score),
                       self.evaluations,self.generation,self.history,self.events)
