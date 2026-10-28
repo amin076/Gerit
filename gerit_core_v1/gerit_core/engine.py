@@ -95,6 +95,8 @@ class Search:
         self.problem = problem
         self.on_generation = on_generation  # optional domain-level output observer
         bound = getattr(problem, "objective_lower_bound", None)
+        if bound is not None and self.cfg.maximize:
+            raise ValueError("objective_lower_bound is supported for minimization only")
         self.goal_score = None if bound is None else (-float(bound) if self.cfg.maximize else float(bound))
         if self.goal_score is not None and not math.isfinite(self.goal_score):
             raise ValueError("objective_lower_bound must be finite")
