@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from examples.square_packing import TwelveSquares, PackingOperators
+from examples.square_packing import TwelveSquares, PackingOperators, default_initial_side
 from examples.packing_rotation import rotate_probe,rotation_statistics
 from gerit_core import Search, Settings
 from examples.packing_visualization import PackingRecorder
@@ -13,10 +13,15 @@ class PackingTests(unittest.TestCase):
         problem = TwelveSquares()
         state = problem.initial(random.Random(4513))
         self.assertTrue(problem.feasible(state))
-        self.assertEqual(state.container_side, 6.0)
+        self.assertEqual(state.container_side, 8.0)
         self.assertEqual(state, problem.decode(problem.encode(state)))
         self.assertTrue(any(abs(square.angle)>1e-6 for square in state.squares))
         self.assertEqual(len(state.squares),12)
+        for i,a in enumerate(state.squares):
+            for b in state.squares[i+1:]:
+                self.assertGreaterEqual((a.x-b.x)**2+(a.y-b.y)**2,4.-1e-10)
+        self.assertEqual(default_initial_side(12),8.)
+        self.assertEqual(default_initial_side(38),14.)
 
     def test_initial_reproducible_and_grid_opt_in(self):
         import random
@@ -39,7 +44,7 @@ class PackingTests(unittest.TestCase):
 
     def test_rotated_valid_candidate_from_fresh_start(self):
         import random
-        problem=TwelveSquares(initial_side=6.)
+        problem=TwelveSquares(initial_side=8.)
         start=problem.initial(random.Random(19))
         candidate=rotate_probe(start,random.Random(19),1.,attempts=200,cap_margin=.15)
         self.assertTrue(problem.feasible(candidate))
@@ -63,7 +68,7 @@ class PackingTests(unittest.TestCase):
             state = json.loads((Path(temp)/"best.json").read_text())["state"]
             self.assertTrue(problem.feasible(problem.decode(state)))
             self.assertAlmostEqual(result.best_objective,result.best_state.container_side**2-12.)
-            recorder=PackingRecorder(temp,6.0,video=False,width=400)
+            recorder=PackingRecorder(temp,8.0,video=False,width=400)
             recorder(0,result.best_state,result.best_objective,1,result.evaluations)
             recorder.finish()
             self.assertTrue((Path(temp)/"latest_packing.png").is_file())
