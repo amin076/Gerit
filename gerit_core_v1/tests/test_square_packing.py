@@ -9,16 +9,29 @@ from examples.packing_visualization import PackingRecorder
 
 class PackingTests(unittest.TestCase):
     def test_initial(self):
-        problem = TwelveSquares(initial_side=5.0)
-        state = problem.initial(None)
+        import random
+        problem = TwelveSquares()
+        state = problem.initial(random.Random(4513))
         self.assertTrue(problem.feasible(state))
-        self.assertEqual(state.container_side, 5.0)
+        self.assertEqual(state.container_side, 6.0)
         self.assertEqual(state, problem.decode(problem.encode(state)))
+        self.assertTrue(any(abs(square.angle)>1e-6 for square in state.squares))
+        self.assertEqual(len(state.squares),12)
+
+    def test_initial_reproducible_and_grid_opt_in(self):
+        import random
+        problem=TwelveSquares()
+        first=problem.initial(random.Random(4513))
+        second=problem.initial(random.Random(4513))
+        self.assertEqual(first,second)
+        grid=TwelveSquares(initial_side=5.,initial_mode="grid").initial(None)
+        self.assertTrue(all(square.angle==0 for square in grid.squares))
+        self.assertTrue(TwelveSquares(initial_side=5.,initial_mode="grid").feasible(grid))
 
     def test_moves(self):
         import random
         problem = TwelveSquares()
-        state = problem.initial(None)
+        state = problem.initial(__import__("random").Random(23))
         actions = PackingOperators(compression_attempts=1)
         for op in (actions.micro, actions.contact, actions.restructure, actions.compress):
             result = op(state, random.Random(7), 1.0)
@@ -26,8 +39,8 @@ class PackingTests(unittest.TestCase):
 
     def test_rotated_valid_candidate_from_fresh_start(self):
         import random
-        problem=TwelveSquares(initial_side=5.)
-        start=problem.initial(None)
+        problem=TwelveSquares(initial_side=6.)
+        start=problem.initial(random.Random(19))
         candidate=rotate_probe(start,random.Random(19),1.,attempts=200,cap_margin=.15)
         self.assertTrue(problem.feasible(candidate))
         self.assertGreater(rotation_statistics(candidate)["rotated_squares"],0,
@@ -50,7 +63,7 @@ class PackingTests(unittest.TestCase):
             state = json.loads((Path(temp)/"best.json").read_text())["state"]
             self.assertTrue(problem.feasible(problem.decode(state)))
             self.assertAlmostEqual(result.best_objective,result.best_state.container_side**2-12.)
-            recorder=PackingRecorder(temp,5.0,video=False,width=400)
+            recorder=PackingRecorder(temp,6.0,video=False,width=400)
             recorder(0,result.best_state,result.best_objective,1,result.evaluations)
             recorder.finish()
             self.assertTrue((Path(temp)/"latest_packing.png").is_file())
