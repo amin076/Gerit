@@ -202,7 +202,7 @@ class Search:
             self.pool[worst] = deepcopy(candidate)
         # Otherwise reject; no global pairwise distance recomputation.
 
-    def _mutate(self, parent, intensity=1.0, *, with_feedback=False):
+    def _mutate(self, parent, intensity=1.0):
         names = list(self.operators)
         total = sum(self.weights.values())
         floor = self.cfg.exploration_floor
@@ -222,8 +222,6 @@ class Search:
         reward = 1.0 if child is not None and child.score < parent.score else 0.0
         rate = self.cfg.learning_rate
         self.weights[name] = max(0.02, (1-rate)*self.weights[name] + rate*(0.02+reward))
-        if with_feedback:
-            return child, name
         return child
 
     def _sample_step(self,lineage):
@@ -233,6 +231,14 @@ class Search:
         w=lineage.step_weights
         floor=self.cfg.step_exploration
         probabilities=[(1-floor)*x/sum(w)+floor/3 for x in w]
+        # Discrete first/second differences of recent improvement help detect
+        # deteriorating progress; they are not derivatives of the objective
+        # or coordinates of the underlying problem.
+        if (lineage.stagnation>=self.cfg.stagnation_jump_threshold
+                or (lineage.progress_velocity<0 and lineage.progress_acceleration<0)):
+            probabilities=[probabilities[0],probabilities[1],probabilities[2]*1.8]
+        elif (lineage.progress_velocity<0 and lineage.progress_acceleration>0):
+            probabilities=[probabilities[0]*1.25,probabilities[1],probabilities[2]]
         k=self.rng.choices(range(3),weights=probabilities,k=1)[0]
         return k,self.cfg.step_scales[k]
 
