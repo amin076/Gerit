@@ -8,6 +8,21 @@ from examples.quadratic import Quadratic, move_coordinate, jump
 
 
 class EngineTest(unittest.TestCase):
+    def test_adaptive_default_starts_one_and_caps_ten(self):
+        settings=Settings()
+        self.assertEqual(settings.initial_parents,1)
+        self.assertEqual(settings.max_parents,10)
+        self.assertEqual(settings.log_every,10)
+
+    def test_domain_progress_display_is_optional(self):
+        from examples.square_packing import TwelveSquares
+        problem=TwelveSquares()
+        self.assertEqual(problem.progress_display(problem.decode({
+            "container_side":5.0,
+            "squares":[{"x":float(i)+.5,"y":float(j)+.5,"angle":0.0}
+                       for j in range(3) for i in range(4)]
+        })),"best_L=5.000000000000")
+
     def test_outputs_and_budget(self):
         with TemporaryDirectory() as directory:
             cfg=Settings(iterations=200,children_per_parent=6,max_parents=3,
