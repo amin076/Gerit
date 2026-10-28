@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from examples.square_packing import TwelveSquares, PackingOperators
 from gerit_core import Search, Settings
+from examples.packing_visualization import PackingRecorder
 
 class PackingTests(unittest.TestCase):
     def test_initial(self):
@@ -33,5 +34,11 @@ class PackingTests(unittest.TestCase):
             self.assertTrue(problem.feasible(result.best_state))
             state = json.loads((Path(temp)/"best.json").read_text())["state"]
             self.assertTrue(problem.feasible(problem.decode(state)))
+            self.assertAlmostEqual(result.best_objective,result.best_state.container_side**2-12.)
+            recorder=PackingRecorder(temp,5.0,video=False,width=400)
+            recorder(0,result.best_state,result.best_objective,1,result.evaluations)
+            recorder.finish()
+            self.assertTrue((Path(temp)/"latest_packing.png").is_file())
+            self.assertTrue((Path(temp)/"final_packing.png").is_file())
 if __name__ == "__main__":
     unittest.main()
