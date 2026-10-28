@@ -31,6 +31,12 @@ class Settings:
     absolute_regression: float = 0.15
     learning_rate: float = 0.15
     exploration_floor: float = 0.05
+    step_scales: tuple = (0.30, 1.0, 3.0)
+    step_exploration: float = 0.12
+    jump_probability: float = 0.08
+    jump_scale: float = 7.0
+    lineage_step_learning_rate: float = 0.12
+    stagnation_jump_threshold: int = 20
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
@@ -54,6 +60,17 @@ class Settings:
             raise ValueError("Need 0 <= low_progress_ratio < high_progress_ratio")
         if not 0 <= self.trend_weight <= 1:
             raise ValueError("trend_weight must be in [0,1]")
+        if len(self.step_scales)!=3 or any(
+                not math.isfinite(float(x)) or x<=0 for x in self.step_scales):
+            raise ValueError("step_scales must contain three positive finite values")
+        if not 0 <= self.step_exploration <= 1 or not 0 <= self.jump_probability <= 1:
+            raise ValueError("Invalid step exploration/jump probabilities")
+        if not math.isfinite(self.jump_scale) or self.jump_scale<=0:
+            raise ValueError("Invalid jump_scale")
+        if not 0 < self.lineage_step_learning_rate <= 1:
+            raise ValueError("Invalid lineage_step_learning_rate")
+        if self.stagnation_jump_threshold < 1:
+            raise ValueError("stagnation_jump_threshold must be positive")
         for key in ("significant_gain", "goal_progress_floor", "min_distance", "absolute_regression"):
             value = getattr(self, key)
             if not math.isfinite(value) or value < 0:
@@ -71,6 +88,10 @@ class Lineage:
     candidate: Candidate
     born: int
     progress: list  # improvement against its own parent, one value per generation
+    step_weights: list = None  # inherited independent step-size strategy
+    stagnation: int = 0
+    progress_velocity: float = 0.0
+    progress_acceleration: float = 0.0
 
 
 @dataclass
@@ -103,6 +124,8 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
+        self.step_stats = {label:{"calls":0,"improved":0,"accepted":0}
+                           for label in ("small","medium","large","jump")}
         self.operator_stats = {name: {"calls":0,"seconds":0.0,"valid":0,"improved":0}
                                for name in operators}
         self.evaluations = 0
@@ -176,7 +199,7 @@ class Search:
             self.pool[worst] = deepcopy(candidate)
         # Otherwise reject; no global pairwise distance recomputation.
 
-    def _mutate(self, parent, intensity=1.0):
+    def _mutate(self, parent, intensity=1.0, *, with_feedback=False):
         names = list(self.operators)
         total = sum(self.weights.values())
         floor = self.cfg.exploration_floor
@@ -196,7 +219,34 @@ class Search:
         reward = 1.0 if child is not None and child.score < parent.score else 0.0
         rate = self.cfg.learning_rate
         self.weights[name] = max(0.02, (1-rate)*self.weights[name] + rate*(0.02+reward))
+        if with_feedback:
+            return child, name
         return child
+
+    def _sample_step(self,lineage):
+        """A domain-free mutation intensity drawn from inheritable preferences."""
+        if lineage.step_weights is None:
+            lineage.step_weights=[1.,1.,1.]
+        w=lineage.step_weights
+        floor=self.cfg.step_exploration
+        probabilities=[(1-floor)*x/sum(w)+floor/3 for x in w]
+        k=self.rng.choices(range(3),weights=probabilities,k=1)[0]
+        return k,self.cfg.step_scales[k]
+
+    def _step_feedback(self,lineage,index,parent,child):
+        label=("small","medium","large")[index]
+        stat=self.step_stats[label]
+        stat["calls"]+=1
+        win=(child is not None and child.score<parent.score)
+        if win:
+            stat["improved"]+=1
+        # Reward relative to the parent's own objective magnitude, not units.
+        reward=0.
+        if win:
+            improvement=(parent.score-child.score)/max(1.,abs(parent.score))
+            reward=min(1.,0.20+10.*improvement)
+        rate=self.cfg.lineage_step_learning_rate
+        lineage.step_weights[index]=max(0.05,(1-rate)*lineage.step_weights[index]+rate*(0.05+reward))
 
     def _remember_history(self):
         """Store earlier parent states for explicit backtracking after a stall."""
@@ -245,7 +295,12 @@ class Search:
             self.events.append({"generation":self.generation,"event":"population_shortfall",
                 "requested":len(self.parents)+1,"created":len(self.parents),"attempts":attempts})
             return False
-        self.parents.append(Lineage(deepcopy(chosen),self.generation,[]))
+        # Branch strategies inherit from an existing lineage. Search policy is
+        # separate from the domain-specific candidate state.
+        ancestor=min(self.parents,key=lambda p:self.problem.distance(chosen.state,p.candidate.state))
+        inherited=list(ancestor.step_weights or [1.,1.,1.])
+        self.parents.append(Lineage(deepcopy(chosen),self.generation,[],
+                                    step_weights=inherited))
         self.events.append({"generation":self.generation,"event":"population_expand",
             "parents":len(self.parents),"source":source,"attempts":attempts,
             "rollback_generations":self.generation-gen if source=="history" else 0})
@@ -338,10 +393,15 @@ class Search:
             "progress_reference":self.reference_gain,
             "goal_gap":None if self.goal_score is None else max(0.,self.best.score-self.goal_score),
             "lineages":[{"born":p.born,"objective":self._objective(p.candidate.score),
-                         "trend":sum(p.progress)/max(1,len(p.progress))}
+                         "trend":sum(p.progress)/max(1,len(p.progress)),
+                         "step_weights":p.step_weights,
+                         "progress_velocity":p.progress_velocity,
+                         "progress_acceleration":p.progress_acceleration,
+                         "stagnation":p.stagnation}
                         for p in self.parents],
             "operator_weights": self.weights,
             "operator_stats":self.operator_stats,
+            "step_stats":self.step_stats,
             "last_event": self.events[-1] if self.events else None,
         })
 
@@ -350,7 +410,7 @@ class Search:
         initial=self._eval(self.problem.initial(self.rng))
         if initial is None:
             raise ValueError("Initial state must be feasible and have finite objective")
-        self.parents=[Lineage(initial,0,[])]
+        self.parents=[Lineage(initial,0,[],step_weights=[1.,1.,1.])]
         self._remember(initial)
         self.checkpoint_score=self.best.score
         if self.goal_score is not None and self.best.score < self.goal_score-1e-9*max(1.,abs(self.goal_score)):
@@ -378,11 +438,41 @@ class Search:
                     for _ in range(cfg.children_per_parent):
                         if self.evaluations>=cfg.evaluation_budget:
                             break
-                        child=self._mutate(parent)
+                        k,intensity=self._sample_step(lineage)
+                        child=self._mutate(parent,intensity)
+                        self._step_feedback(lineage,k,parent,child)
                         if child is not None and child.score<parent.score:
                             improvements.append(child)
+                    # A continuous, explicit chance to test a much longer jump,
+                    # even after local progress has stopped. Archive the best
+                    # objective independently of the chosen lineage.
+                    jump_chance=cfg.jump_probability
+                    if lineage.stagnation>=cfg.stagnation_jump_threshold:
+                        jump_chance=min(0.5,2*jump_chance)
+                    if self.evaluations<cfg.evaluation_budget and self.rng.random()<jump_chance:
+                        self.step_stats["jump"]["calls"]+=1
+                        trial=self._mutate(parent,cfg.jump_scale)
+                        if trial is not None and trial.score<parent.score:
+                            self.step_stats["jump"]["improved"]+=1
+                            improvements.append(trial)
+                        elif (trial is not None
+                              and trial.score<=self.best.score+cfg.absolute_regression
+                              and len(self.parents)>1
+                              and self.rng.random()<0.20):
+                            # Limited non-improving lineage exploration, never
+                            # overwrites the global best. This branch may move
+                            # into a different basin on the next generation.
+                            self.snapshots.append((step,deepcopy(trial)))
+                            self.step_stats["jump"]["accepted"]+=1
                     child=min(improvements,key=lambda c:c.score) if improvements else parent
-                    lineage.progress.append(max(0.,parent.score-child.score))
+                    gain=max(0.,parent.score-child.score)
+                    # First difference of progress and its discrete acceleration.
+                    prev_gain=lineage.progress[-1] if lineage.progress else 0.
+                    prev_velocity=lineage.progress_velocity
+                    lineage.progress_velocity=gain-prev_gain
+                    lineage.progress_acceleration=lineage.progress_velocity-prev_velocity
+                    lineage.stagnation=0 if gain>0 else lineage.stagnation+1
+                    lineage.progress.append(gain)
                     if len(lineage.progress)>cfg.competition_generations:
                         del lineage.progress[:-cfg.competition_generations]
                     lineage.candidate=child
@@ -417,6 +507,7 @@ class Search:
                     "evaluations":self.evaluations,
                     "best_objective":self._objective(self.best.score),
                     "population":len(self.parents),"events":self.events,
-                    "operator_stats":self.operator_stats})
+                    "operator_stats":self.operator_stats,
+                    "step_stats":self.step_stats})
         return Result(deepcopy(self.best.state),self._objective(self.best.score),
                       self.evaluations,self.generation,self.history,self.events)
