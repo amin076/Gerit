@@ -1,3 +1,47 @@
+## Standard random start: four times reference grid AREA (October 2026)
+
+For n unit squares, define the reference grid side as
+`ceil(sqrt(n))`. Initial square side defaults to
+`2*ceil(sqrt(n))`, making its **area** four times the area of the
+reference square, NOT four times its side. Thus for n=12 the initial
+side is 8 (area 64); for n=38, the formula produces side 14 (area 196).
+This formula can scale to other counts, but this example's full
+adapter, operators and renderer are presently implemented/tested
+for **12 squares**, not as a ready-to-run 38-square solution.
+
+Initial square centers are drawn continuously and randomly in the
+bounding square. Orientations are each independently drawn uniformly
+from [0, pi/2) radians; there are NO hardcoded preferred angles.
+Placement accepts only pairwise center distances >= 2 unit side
+lengths, as well as strict SAT non-overlap and boundary validation.
+Since a unit square has circumradius sqrt(2)/2, any center separation
+at least sqrt(2) guarantees no overlap at **any** orientation; the
+default separation of 2 is conservative. This minimum separation is
+an INITIALIZATION constraint only: later descendants may approach
+and touch, with no artificial minimum distance in the search.
+The initial configuration uses the seeded RNG, so a fixed seed
+reproduces the same sample.
+
+The console displays the first step and every 20 completed
+generations with `--log-every 20`; status checkpoints can also be
+written every 20 steps. Best images are still updated each
+generation, even though CMD logging is sparser. Disable video
+in the initial 5000-generation timing experiment.
+
+### Windows CMD
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --iterations 5000 --children-per-parent 10 --max-parents 5 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 300000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --initial-mode random --initial-angle-mode random --initial-min-center-distance 2.0 --log-every 20 --checkpoint-every 20 --seed 4514 --output-dir results/squares-random-standard-5000-4514
+
+An omitted `--initial-side` now automatically uses 8 for 12
+squares; override it explicitly only for sensitivity experiments.
+The run always starts fresh rather than resuming `best.json`.
+
 ## Default initialization changed: random rotated 6x6 (October 2026)
 
 This change belongs ONLY to `examples.square_packing.TwelveSquares`; the
