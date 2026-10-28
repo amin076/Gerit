@@ -115,6 +115,10 @@ class TwelveSquares:
             "increase --initial-side, lower --initial-min-center-distance "
             "(not below sqrt(2)), or increase --initial-restarts")
 
+    def progress_display(self, state):
+        """Human-readable square-side metric; the generic core is domain-agnostic."""
+        return f"best_L={state.container_side:.12f}"
+
     def evaluate(self, state):
         # Empty area is exactly L^2 - 12. Same minimizer as L and L^2.
         return state.container_side**2 - 12.0
