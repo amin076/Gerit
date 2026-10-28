@@ -418,7 +418,8 @@ class Search:
             "parents":len(self.parents),"removed_index":drop,
             "removed_objective":self._objective(removed.candidate.score)})
         # Preserve the global record even when a promising but nonoptimal lineage survives.
-        if len(self.parents)==1 and self.best.score < self.parents[0].candidate.score:
+        if (len(self.parents)==1 and not self._explorer_active(self.parents[0])
+                and self.best.score < self.parents[0].candidate.score):
             self.snapshots.append((self.generation,deepcopy(self.parents[0].candidate)))
             self.parents[0]=Lineage(deepcopy(self.best),self.generation,[])
         return True
