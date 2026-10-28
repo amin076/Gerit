@@ -42,6 +42,35 @@ class StepLearningTests(unittest.TestCase):
             self.assertIn("step_stats",status)
             self.assertIn("progress_acceleration",status["lineages"][0])
 
+    def test_diversity_and_multigeneration_explorer(self):
+        from gerit_core.engine import Candidate, Lineage
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=3,initial_parents=1,
+                         output_dir=directory,diversity_fraction=0.0,
+                         max_explorers=1,explorer_generations=4)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            original=Candidate((1.0,),1.0)
+            search.best=original
+            search.pool=[original]
+            parent=Lineage(original,0,[],step_weights=[1.,1.,1.])
+            search.parents=[parent]
+            search.generation=10
+            duplicate=Candidate((1.0,),1.0)
+            self.assertFalse(search._spawn_explorer(duplicate,parent))
+            # The exploratory state is worse than the branch baseline but
+            # within the allowed global regression allowance.
+            worse=Candidate((1.1,),1.1)
+            self.assertTrue(search._spawn_explorer(worse,parent))
+            self.assertEqual(search.parents[-1].explorer_until,14)
+            self.assertEqual(search.parents[-1].explorer_baseline,1.0)
+            self.assertEqual(search._population_diversity()["pairs"],1)
+            self.assertAlmostEqual(search._population_diversity()["minimum"],0.1)
+            self.assertFalse(search._spawn_explorer(Candidate((1.12,),1.12),parent))
+            search._contract()
+            self.assertEqual(len(search.parents),1)
+            self.assertEqual(search.parents[0].candidate, worse)
+            self.assertEqual(search.parents[0].explorer_until,14)
+
     def test_warm_started_square_remains_valid(self):
         problem=TwelveSquares()
         state=problem.initial(random.Random(4514))
