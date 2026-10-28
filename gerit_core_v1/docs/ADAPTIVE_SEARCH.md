@@ -1,3 +1,50 @@
+## Persistent evidence-based learning memory (2026-10-29)
+
+The earlier EMA reward update frequently drove **every** operator weight to
+0.02 and every lineage step-size weight to 0.05 after long periods of
+zero immediate improvements. This erased distinctions between previously
+successful moves. The core now maintains cumulative attempts and successful
+improvements, with fixed low-rate pseudocounts:
+
+    preference = (learning_prior_successes + successes) /
+                 (learning_prior_trials + attempts)
+
+Defaults: `learning_prior_successes=0.2`,
+`learning_prior_trials=20`. Each operator has a global evidence record
+(`operator_memory`), while every lineage has its own step-size
+`step_attempts` and `step_successes`. New lineages inherit *copies*
+of these counts, so later experience diverges. No extra domain concepts
+are introduced to the engine.
+
+The existing guaranteed exploration floor and progress-trend intensity
+bias remain. Lifetime evidence means that preferences can become
+slower to react over very long runs; this is a deliberate first step
+toward preserving rare events, NOT proof of optimal adaptive learning.
+A future controlled comparison can assess bounded windows, hierarchical
+priors, and delayed multi-generation credit. Existing settings
+`learning_rate` and `lineage_step_learning_rate` are retained for
+configuration compatibility but are no longer used in these two
+evidence-based preference updates.
+
+New `status.json` fields: `operator_memory` and lineage-specific
+`step_attempts` and `step_successes`.
+`run_summary.json` also records `operator_memory` and
+`operator_weights`. Prior best.json files remain compatible since
+a warm start loads state geometry only.
+
+### CMD check and continuation from the previous best
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-diverse-explorers-500-4517/best.json --iterations 500 --initial-parents 1 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 60000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4518 --output-dir results/squares-persistent-learning-500-4518
+
+Expected geometric warm-start side: `4.050381047578`.
+Use equal starting state and evaluation budget for a controlled baseline.
+
 ## Genuine branch diversity and multi-generation escape trials (2026-10-29)
 
 The core now computes per-generation pairwise distances among **active**
