@@ -24,6 +24,7 @@ from gerit.adaptive_v4 import propose_micro, propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
 from gerit_core import Search, Settings
 from examples.packing_visualization import PackingRecorder
+from examples.packing_rotation import rotate_probe, rotation_statistics
 
 
 class TwelveSquares:
@@ -103,6 +104,10 @@ class PackingOperators:
                                       parent.container_side+self.cap_margin)
         return self._finish(parent,proposed,rng)
 
+    def rotate(self,parent,rng,intensity):
+        trial=rotate_probe(parent,rng,intensity,cap_margin=self.cap_margin)
+        return self._finish(parent,trial,rng)
+
     def compress(self,parent,rng,intensity):
         # Direct local search, including single-square and coordinated motions.
         settings=CompressionSettings(attempts_per_child=max(1,self.compression_attempts*2))
@@ -138,10 +143,12 @@ def main():
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every)
     result=Search(problem,{'micro':ops.micro,'contact':ops.contact,
-                           'restructure':ops.restructure,'compress':ops.compress},
+                           'restructure':ops.restructure,'rotate':ops.rotate,
+                           'compress':ops.compress},
                   cfg,on_generation=recorder).run()
     recorder.finish()
     side=result.best_state.container_side
+    print("ROTATION_STATISTICS",rotation_statistics(result.best_state),flush=True)
     print('DONE generations={} evaluations={} L={:.12f} area={:.12f} '
           'unused_area={:.12f} valid={} state={}'.format(
           result.generations,result.evaluations,side,side**2,
