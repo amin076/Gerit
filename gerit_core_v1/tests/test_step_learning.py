@@ -184,17 +184,13 @@ class StepLearningTests(unittest.TestCase):
             # Simulate post-expiry lineage continuing and improving.
             new=Candidate((origin.candidate.state[0]-.01,),
                           origin.candidate.score-.02)
-            amount=(origin.explorer_credit_baseline-new.score)/max(
-                1.,abs(origin.explorer_credit_baseline))
             before=search.operator_memory["step"]["delayed_credit"]
-            search._credit_operator(origin.explorer_origin_operator,
-                                    min(1.,cfg.utility_gain_scale*amount))
-            origin.explorer_credited=True
+            self.assertTrue(search._credit_late_explorer(origin,new.score))
             self.assertGreater(search.operator_memory["step"]["delayed_credit"],before)
-            # Once credited, no second credit is due for later successes.
+            self.assertFalse(search._credit_late_explorer(origin,new.score-.01))
+            self.assertEqual(len(search.late_credit_events),1)
+            self.assertEqual(search.late_credit_events[0]["lineage_id"],origin.lineage_id)
             old=search.operator_memory["step"]["delayed_credit"]
-            if not origin.explorer_credited:
-                search._credit_operator("step",1.)
             self.assertEqual(old,search.operator_memory["step"]["delayed_credit"])
 
     def test_warm_started_square_remains_valid(self):
