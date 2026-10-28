@@ -40,6 +40,16 @@ Run tests:
 
     py -3 -m unittest discover -s tests -v
 
+## Multiwell escape benchmark
+
+To challenge Gerit with many local minima and compare adaptive branching to a
+single-parent baseline, run:
+
+    py -3 -m examples.rastrigin_benchmark --seeds 5 --start-seed 3000 --evaluation-budget 20000 --iterations 3000 --max-parents 5 --population-adjust-interval 20 --output-dir results/rastrigin-5seeds
+
+See [docs/RASTRIGIN_BENCHMARK.md](docs/RASTRIGIN_BENCHMARK.md). This is a
+benchmark, not evidence of global convergence until results are inspected.
+
 ## Limitations
 
 This first independent core does NOT yet run or resume the 12-square experiment.
