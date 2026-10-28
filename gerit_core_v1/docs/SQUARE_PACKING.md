@@ -1,3 +1,49 @@
+## Legacy-vs-generic integration audit (new)
+
+Separating search from the square problem was appropriate, but the initial
+adapter was **not feature-equivalent** to the old square-specific runner:
+- Historical `propose_learned` with ten action families and the legacy
+  `LearningController` was omitted; the new adapter now exposes it as
+  `learned` alongside `micro`, `contact`, `restructure`, `rotate`, and
+  `compress`. Use `--operator-set legacy-hybrid` (default) to include it;
+  use `--operator-set basic` to reproduce the earlier five-operator mix.
+- The old runner used a domain-specific adaptive controller and per-lineage
+  inherited mutation policies. The current generic engine still does NOT
+  fully reproduce those policies: the restored learned operator starts with
+  a shared adapter policy and shared global learning controller.
+- The old runner used 35 compression trials per child by default. The adapter
+  exposes `--compression-attempts`; smaller values trade effectiveness for
+  speed. They are not equivalent runs.
+- The first generic reservoir performed a new quadratic all-pairs diversity
+  comparison whenever it exceeded capacity. Now generic reservoir replacement
+  requires only O(N) distances to the incoming candidate, avoiding the
+  observed performance collapse at the default N=128.
+- The generic engine records `operator_stats` (calls, total wall seconds,
+  valid candidates, improving candidates) in status.json and run_summary.json.
+  These are domain-neutral diagnostics.
+- The 5x5 starting arrangement is a regular 4x3 array, not the old
+  fresh-nongrid starting distribution. Different initial conditions prevent a
+  scientific claim that the engine itself is better/worse from one run.
+
+### Single-seed integration test (Windows CMD)
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --iterations 120 --children-per-parent 10 --max-parents 5 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 10000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 1 --seed 4511 --output-dir results/squares-legacy-hybrid-seed4511
+
+This run generates the current/final PNG images. It intentionally omits MP4
+encoding to keep profiling costs down. Add `--video --fps 30` after confirming
+that speed and the generated geometry are acceptable. The best solution
+remains protected in best.json. For hard evidence inspect
+run_summary.json -> operator_stats, status.json and the final printed
+ROTATION_STATISTICS and LEGACY_LEARNING.
+
+Do not claim that angular diversity, structural moves or learned policy are
+beneficial until comparable equal-budget multi-seed ablations confirm it.
 ## Rotation diagnostics and non-axis-aligned search
 
 The initial 5x5 geometry has unrotated unit squares, but rotated poses
