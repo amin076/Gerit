@@ -295,11 +295,8 @@ class Search:
         win=(child is not None and child.score<parent.score)
         if win:
             stat["improved"]+=1
-        # Reward relative to the parent's own objective magnitude, not units.
-        reward=0.
-        if win:
-            improvement=(parent.score-child.score)/max(1.,abs(parent.score))
-            reward=min(1.,0.20+10.*improvement)
+        # Record immediate improvement evidence; magnitude/delayed credit
+        # can be introduced separately without changing the domain interface.
         if lineage.step_attempts is None:
             lineage.step_attempts=[0,0,0]
             lineage.step_successes=[0,0,0]
