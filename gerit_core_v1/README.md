@@ -1,3 +1,23 @@
+## New: domain-independent objective gap and square visualization
+
+A problem adapter MAY declare `objective_lower_bound` (for minimization).
+The engine then measures fractional progress toward this certified lower bound
+and compares it with a moving local progress baseline. This does not imply
+the bound is attainable. Problems without a bound use rolling gains.
+An optional generic generation callback enables outputs separate from search.
+
+The 12-square adapter minimizes **unused area = L^2 - 12**, with a certified
+lower bound of 0. In `best.json`, `objective` now means empty area;
+`state.container_side` is the side length L. The adapter creates
+`latest_packing.png` every generation and `final_packing.png` on completion.
+Use `--video --fps 30` to create frame PNGs and `packing.mp4` (ffmpeg required).
+
+Quick updated command:
+
+    py -3 -u -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --video --fps 30 --log-every 1 --seed 4500 --output-dir results/squares-gap-video
+
+See [docs/SQUARE_PACKING.md](docs/SQUARE_PACKING.md).
+
 # Gerit Core v0.1 — generic optimization prototype
 
 This isolated prototype implements a domain-independent adaptive evolutionary search engine.
