@@ -22,6 +22,7 @@ from gerit.selection import packing_distance
 from gerit.local_compression import CompressionSettings, compress_valid
 from gerit.adaptive_v4 import propose_micro, propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
+from gerit.learning import LearningController, propose_learned
 from gerit_core import Search, Settings
 from examples.packing_visualization import PackingRecorder
 from examples.packing_rotation import rotate_probe, rotation_statistics
@@ -76,6 +77,10 @@ class PackingOperators:
     def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12):
         if cap_margin < 0 or compression_attempts < 0 or rotation_attempts < 1:
             raise ValueError("cap-margin and compression-attempts must be nonnegative")
+        self.learn_controller=LearningController()
+        self.learn_policy=self.learn_controller.new_policy()
+        self.learned_calls=0
+        self.learned_improved=0
         self.rotation_attempts=rotation_attempts
         self.rotation_probes=0
         self.rotation_valid=0
@@ -91,6 +96,27 @@ class PackingOperators:
                                     side_cap=parent.container_side+self.cap_margin)
             return packed
         return raw
+
+    def learned(self,parent,rng,intensity):
+        """Reintegrate preexisting 10-family geometric policy learner.
+
+        Note: shared adapter policy is a first integration, not yet a distinct
+        inheritable policy for each independent generic-core lineage.
+        """
+        self.learned_calls+=1
+        raw,metadata=propose_learned(parent,rng,
+                      parent.container_side+self.cap_margin,
+                      self.learn_policy,self.learn_controller)
+        final=self._finish(parent,raw,rng)
+        valid=(raw is not None and validate_packing(final,tolerance=0.).valid)
+        raw_gain=(parent.container_side-raw.container_side) if raw is not None else 0.
+        compression_gain=(raw.container_side-final.container_side) if raw is not None else 0.
+        self.learn_policy,_=self.learn_controller.update(
+            self.learn_policy,metadata,valid,raw_gain,
+            compression_gain,parent.container_side)
+        if valid and final.container_side < parent.container_side:
+            self.learned_improved+=1
+        return final
 
     def micro(self,parent,rng,intensity):
         # Legacy geometric operators accept a side cap, not an intensity.
@@ -133,6 +159,7 @@ def main():
         else:
             parser.add_argument(flag,type=type(default),default=default)
     parser.add_argument("--initial-side",type=float,default=5.)
+    parser.add_argument("--operator-set",choices=("legacy-hybrid","basic"),default="legacy-hybrid")
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
     parser.add_argument("--rotation-attempts",type=int,default=12)
@@ -151,12 +178,18 @@ def main():
     recorder=PackingRecorder(cfg.output_dir,args.initial_side,
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every)
-    result=Search(problem,{'micro':ops.micro,'contact':ops.contact,
-                           'restructure':ops.restructure,'rotate':ops.rotate,
-                           'compress':ops.compress},
-                  cfg,on_generation=recorder).run()
+    operators={'micro':ops.micro,'contact':ops.contact,
+               'restructure':ops.restructure,'rotate':ops.rotate,
+               'compress':ops.compress}
+    if args.operator_set=="legacy-hybrid":
+        operators['learned']=ops.learned
+    print('GEOMETRY_OPERATORS',list(operators),flush=True)
+    result=Search(problem,operators,cfg,on_generation=recorder).run()
     recorder.finish()
     side=result.best_state.container_side
+    print("LEGACY_LEARNING",{"calls":ops.learned_calls,
+                             "improving_candidates":ops.learned_improved,
+                             "action_statistics":ops.learn_controller.snapshot()["observations"]},flush=True)
     print("ROTATION_PROBES",{"calls":ops.rotation_probes,
                             "valid_rotated_proposals":ops.rotation_valid},flush=True)
     print("ROTATION_STATISTICS",rotation_statistics(result.best_state),flush=True)
