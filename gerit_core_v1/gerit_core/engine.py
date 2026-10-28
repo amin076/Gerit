@@ -15,7 +15,13 @@ class Settings:
     max_parents: int = 5
     stagnation_window: int = 200
     significant_gain: float = 1e-6
-    competition_generations: int = 200
+    competition_generations: int = 200  # lineage trend memory horizon (legacy CLI flag)
+    population_adjust_interval: int = 20
+    history_depth: int = 120
+    progress_smoothing: float = 0.35
+    low_progress_ratio: float = 0.25
+    high_progress_ratio: float = 0.80
+    trend_weight: float = 0.35
     evaluation_budget: int = 300000
     reservoir_size: int = 128
     branch_seed_attempts: int = 256
@@ -31,13 +37,20 @@ class Settings:
     def validate(self, operators):
         for key in ("iterations", "children_per_parent", "max_parents", "stagnation_window",
                     "competition_generations", "evaluation_budget", "reservoir_size",
-                    "branch_seed_attempts", "checkpoint_every"):
+                    "branch_seed_attempts", "checkpoint_every",
+                    "population_adjust_interval", "history_depth"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be positive")
         if not operators:
             raise ValueError("At least one operator required")
         if not 0 <= self.exploration_floor <= 1 or not 0 < self.learning_rate <= 1:
             raise ValueError("Invalid learning parameters")
+        if not 0 < self.progress_smoothing <= 1:
+            raise ValueError("progress_smoothing must be in (0,1]")
+        if not 0 <= self.low_progress_ratio < self.high_progress_ratio:
+            raise ValueError("Need 0 <= low_progress_ratio < high_progress_ratio")
+        if not 0 <= self.trend_weight <= 1:
+            raise ValueError("trend_weight must be in [0,1]")
         for key in ("significant_gain", "min_distance", "absolute_regression"):
             value = getattr(self, key)
             if not math.isfinite(value) or value < 0:
@@ -48,6 +61,13 @@ class Settings:
 class Candidate:
     state: object
     score: float
+
+
+@dataclass
+class Lineage:
+    candidate: Candidate
+    born: int
+    progress: list  # improvement against its own parent, one value per generation
 
 
 @dataclass
@@ -82,7 +102,9 @@ class Search:
         self.history = []
         self.checkpoint_step = 0
         self.checkpoint_score = float("inf")
-        self.competition_end = None
+        self.competition_end = None  # deprecated; retained for existing output readers
+        self.snapshots = []          # historical parent states, independent of geometry
+        self.reference_gain = None   # adaptive local progress scale
         self.output = Path(self.cfg.output_dir)
         self.output.mkdir(parents=True, exist_ok=True)
 
@@ -150,98 +172,176 @@ class Search:
         self.weights[name] = max(0.02, (1-rate)*self.weights[name] + rate*(0.02+reward))
         return child
 
-    def _spawn(self, incumbent):
+    def _remember_history(self):
+        """Store earlier parent states for explicit backtracking after a stall."""
+        for lineage in self.parents:
+            self.snapshots.append((self.generation, deepcopy(lineage.candidate)))
+        limit = self.cfg.history_depth * self.cfg.max_parents
+        if len(self.snapshots) > limit:
+            del self.snapshots[:-limit]
+
+    def _add_branch(self):
+        """Grow by at most ONE lineage per adjustment. Historical states take priority.
+
+        A near-optimum parent may not yield a diverse child in a single generation;
+        try previous generations, a diverse reservoir, then extra proposals.
+        """
         cfg = self.cfg
-        selected = [deepcopy(incumbent)]
-        def select_from_pool():
-            remaining = [c for c in self.pool if c.score <= incumbent.score + cfg.absolute_regression]
-            while remaining and len(selected) < cfg.max_parents:
-                candidate = max(remaining, key=lambda c: (
-                    min(self.problem.distance(c.state, p.state) for p in selected), -c.score
-                ))
-                remaining.remove(candidate)
-                if min(self.problem.distance(candidate.state, p.state) for p in selected) >= cfg.min_distance:
-                    selected.append(deepcopy(candidate))
-        select_from_pool()
+        if len(self.parents) >= cfg.max_parents:
+            return False
+        incumbent = min((x.candidate for x in self.parents), key=lambda c: c.score)
+        def eligible(candidate):
+            return (candidate.score <= self.best.score + cfg.absolute_regression
+                and all(self.problem.distance(candidate.state, p.candidate.state) >= cfg.min_distance
+                        for p in self.parents))
+        source = None
+        chosen = None
+        # Try actual preceding generations (1, 2, 3, ...), not just current offspring.
+        for gen, candidate in reversed(self.snapshots):
+            if gen < self.generation and eligible(candidate):
+                chosen,source = candidate, "history"
+                break
+        if chosen is None:
+            options = [c for c in self.pool if eligible(c)]
+            if options:
+                chosen = max(options, key=lambda c: (
+                    min(self.problem.distance(c.state,p.candidate.state) for p in self.parents),
+                    -c.score))
+                source = "reservoir"
         attempts = 0
-        while len(selected) < cfg.max_parents and attempts < cfg.branch_seed_attempts and self.evaluations < cfg.evaluation_budget:
+        while chosen is None and attempts < cfg.branch_seed_attempts and self.evaluations < cfg.evaluation_budget:
             attempts += 1
-            self._mutate(self.rng.choice(selected), 1.0 + 2.0*self.rng.random())
-            select_from_pool()
-        self.events.append({"generation": self.generation,
-                            "event": "branch_start" if len(selected)>1 else "branch_seed_shortfall",
-                            "requested": cfg.max_parents, "created": len(selected),
-                            "attempts": attempts})
-        return selected
+            base = self.rng.choice(self.parents).candidate
+            candidate = self._mutate(base, 1.0 + 3.0 * self.rng.random())
+            if candidate is not None and eligible(candidate):
+                chosen,source = candidate,"generated"
+        if chosen is None:
+            self.events.append({"generation":self.generation,"event":"population_shortfall",
+                "requested":len(self.parents)+1,"created":len(self.parents),"attempts":attempts})
+            return False
+        self.parents.append(Lineage(deepcopy(chosen),self.generation,[]))
+        self.events.append({"generation":self.generation,"event":"population_expand",
+            "parents":len(self.parents),"source":source,"attempts":attempts,
+            "rollback_generations":self.generation-gen if source=="history" else 0})
+        return True
+
+    def _contract(self):
+        """Drop one lineage based on BOTH current objective and sustained progress."""
+        cfg = self.cfg
+        if len(self.parents) <= 1:
+            return False
+        scores = [p.candidate.score for p in self.parents]
+        momentum = [sum(p.progress[-cfg.competition_generations:])
+                    / max(1,len(p.progress[-cfg.competition_generations:]))
+                    for p in self.parents]
+        smin,smax = min(scores),max(scores)
+        mmin,mmax = min(momentum),max(momentum)
+        ranked = []
+        for i,p in enumerate(self.parents):
+            quality = (scores[i]-smin)/max(1e-15,smax-smin)
+            trend = (momentum[i]-mmin)/max(1e-15,mmax-mmin)
+            priority = (1-cfg.trend_weight)*quality - cfg.trend_weight*trend
+            ranked.append((priority,i))
+        _,drop=max(ranked)
+        removed=self.parents.pop(drop)
+        self.events.append({"generation":self.generation,"event":"population_contract",
+            "parents":len(self.parents),"removed_index":drop,
+            "removed_objective":self._objective(removed.candidate.score)})
+        # Preserve the global record even when a promising but nonoptimal lineage survives.
+        if len(self.parents)==1 and self.best.score < self.parents[0].candidate.score:
+            self.snapshots.append((self.generation,deepcopy(self.parents[0].candidate)))
+            self.parents[0]=Lineage(deepcopy(self.best),self.generation,[])
+        return True
+
+    def _adjust_population(self):
+        """Use a LOCAL rolling reference; early giant gains do not set a fixed scale."""
+        cfg=self.cfg
+        if self.generation-self.checkpoint_step < cfg.population_adjust_interval:
+            return
+        gain=max(0.0,self.checkpoint_score-self.best.score)
+        if self.reference_gain is None:
+            self.reference_gain=max(gain,cfg.significant_gain)
+        reference=max(self.reference_gain,cfg.significant_gain,1e-15)
+        ratio=gain/reference
+        if gain <= 0 or ratio < cfg.low_progress_ratio:
+            action="expand" if len(self.parents)<cfg.max_parents else "hold"
+            if action=="expand":
+                self._add_branch()
+        elif ratio >= cfg.high_progress_ratio and len(self.parents)>1:
+            action="contract"
+            self._contract()
+        else:
+            action="hold"
+        self.events.append({"generation":self.generation,"event":"progress_check",
+            "gain":gain,"reference":reference,"ratio":ratio,
+            "action":action,"parents":len(self.parents)})
+        # Adapt to the current stage; zero-gain windows do not erase the reference.
+        if gain>0:
+            a=cfg.progress_smoothing
+            self.reference_gain=(1-a)*self.reference_gain+a*gain
+        self.checkpoint_step=self.generation
+        self.checkpoint_score=self.best.score
 
     def _status(self):
         self._atomic("status.json", {
             "generation": self.generation, "evaluations": self.evaluations,
             "best_objective": self._objective(self.best.score),
             "parents": len(self.parents), "competition_end": self.competition_end,
+            "progress_reference":self.reference_gain,
+            "lineages":[{"born":p.born,"objective":self._objective(p.candidate.score),
+                         "trend":sum(p.progress)/max(1,len(p.progress))}
+                        for p in self.parents],
             "operator_weights": self.weights,
             "last_event": self.events[-1] if self.events else None,
         })
 
     def run(self):
-        cfg = self.cfg
-        initial = self._eval(self.problem.initial(self.rng))
+        cfg=self.cfg
+        initial=self._eval(self.problem.initial(self.rng))
         if initial is None:
             raise ValueError("Initial state must be feasible and have finite objective")
-        self.parents = [initial]
+        self.parents=[Lineage(initial,0,[])]
         self._remember(initial)
-        self.checkpoint_score = self.best.score
+        self.checkpoint_score=self.best.score
         try:
-            for step in range(1, cfg.iterations+1):
-                if self.evaluations >= cfg.evaluation_budget:
-                    self.events.append({"generation": self.generation, "event": "budget_exhausted"})
+            for step in range(1,cfg.iterations+1):
+                if self.evaluations>=cfg.evaluation_budget:
+                    self.events.append({"generation":self.generation,"event":"budget_exhausted"})
                     break
-                self.generation = step
-                next_parents = []
-                for parent in self.parents:
-                    improved = []
+                self.generation=step
+                self._remember_history()
+                next_parents=[]
+                for lineage in self.parents:
+                    parent=lineage.candidate
+                    improvements=[]
                     for _ in range(cfg.children_per_parent):
-                        if self.evaluations >= cfg.evaluation_budget:
+                        if self.evaluations>=cfg.evaluation_budget:
                             break
-                        child = self._mutate(parent)
-                        if child is not None and child.score < parent.score:
-                            improved.append(child)
-                    next_parents.append(min(improved, key=lambda x:x.score) if improved else parent)
-                self.parents = next_parents
-                if self.competition_end is not None and step >= self.competition_end:
-                    winner_index = min(range(len(self.parents)), key=lambda i:self.parents[i].score)
-                    winner = self.parents[winner_index]
-                    if self.best.score < winner.score:
-                        winner = deepcopy(self.best)
-                        winner_index = -1
-                    self.parents = [winner]
-                    self.competition_end = None
-                    self.events.append({"generation":step,"event":"branch_end",
-                                        "winner_index":winner_index,
-                                        "objective":self._objective(winner.score)})
-                if self.competition_end is None and len(self.parents) == 1 and step-self.checkpoint_step >= cfg.stagnation_window:
-                    gain = self.checkpoint_score-self.best.score
-                    if gain >= cfg.significant_gain:
-                        self.checkpoint_step = step
-                        self.checkpoint_score = self.best.score
-                    elif cfg.max_parents > 1:
-                        self.parents = self._spawn(self.parents[0])
-                        if len(self.parents) > 1:
-                            self.competition_end = step + cfg.competition_generations
-                        self.checkpoint_step = step
-                        self.checkpoint_score = self.best.score
+                        child=self._mutate(parent)
+                        if child is not None and child.score<parent.score:
+                            improvements.append(child)
+                    child=min(improvements,key=lambda c:c.score) if improvements else parent
+                    lineage.progress.append(max(0.,parent.score-child.score))
+                    if len(lineage.progress)>cfg.competition_generations:
+                        del lineage.progress[:-cfg.competition_generations]
+                    lineage.candidate=child
+                    next_parents.append(lineage)
+                self.parents=next_parents
+                self._adjust_population()
                 self.history.append({"generation":step,"evaluations":self.evaluations,
-                                     "best_objective":self._objective(self.best.score),
-                                     "parents":len(self.parents)})
-                if step % cfg.checkpoint_every == 0:
+                    "best_objective":self._objective(self.best.score),
+                    "parents":len(self.parents),
+                    "progress_reference":self.reference_gain})
+                if step%cfg.checkpoint_every==0:
                     self._status()
         finally:
             self._save_best()
-            self._status()
-            self._atomic("run_summary.json", {
-                "settings":asdict(cfg), "generation":self.generation,
-                "evaluations":self.evaluations, "best_objective":self._objective(self.best.score),
-                "events":self.events
-            })
-        return Result(deepcopy(self.best.state), self._objective(self.best.score),
-                      self.evaluations, self.generation, self.history, self.events)
+            if self.best is not None:
+                self._status()
+                self._atomic("run_summary.json",{
+                    "settings":asdict(cfg),"generation":self.generation,
+                    "evaluations":self.evaluations,
+                    "best_objective":self._objective(self.best.score),
+                    "population":len(self.parents),"events":self.events})
+        return Result(deepcopy(self.best.state),self._objective(self.best.score),
+                      self.evaluations,self.generation,self.history,self.events)
