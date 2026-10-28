@@ -1,3 +1,51 @@
+## Updated goal-gap objective and output (October 2026)
+
+The 12-square adapter now minimizes **unused area**, `L*L - 12`, rather than
+just the side length. For positive L the two have the same minimizers, but
+the saved `best.json` field `objective` now means unused area.
+The certified lower bound for unused area is **zero** (area cannot be
+negative). It does NOT assert that a zero-gap packing is attainable.
+
+The generic core optionally reads an adapter's `objective_lower_bound`
+and scores window progress as the fraction of the remaining certified
+objective gap closed. This is compared against a moving baseline of recent
+fractions. Early large improvements are not a permanent threshold.
+Problems without a trustworthy bound retain the rolling-gain fallback.
+The optional `on_generation` callback is independent of search logic.
+
+The square adapter (and **not** Gerit Core) now writes
+`latest_packing.png` after each completed generation and
+`final_packing.png` at end. With `--video` it also stores one PNG per
+generation by default in `frames/` and encodes `packing.mp4` at
+`--fps 30`. For 10,000 completed generations this is ~333 seconds of
+playback. `--frame-every 5` reduces storage and playback length.
+Video requires `ffmpeg` on PATH; static images require Pillow.
+Rendering and video creation add disk usage and time.
+
+IMPORTANT: this is an experimental controller. The run may exhaust the
+evaluation budget before its requested generation count, and the
+population may not contract despite progress.
+
+### Run after git pull (CMD)
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+Quick run, images:
+
+    py -3 -u -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --log-every 1 --seed 4500 --output-dir results/squares-gap-smoke
+
+Quick run, images and 30 fps video:
+
+    py -3 -u -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --video --fps 30 --log-every 1 --seed 4500 --output-dir results/squares-gap-video
+
+Long run:
+
+    py -3 -u -m examples.square_packing --iterations 10000 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 1000000 --compression-attempts 8 --video --fps 30 --log-every 1 --seed 4501 --output-dir results/squares-gap-10000
+
 # Twelve unit squares: Gerit Core adapter
 
 This is the first integration of the **domain-independent** Gerit search core
