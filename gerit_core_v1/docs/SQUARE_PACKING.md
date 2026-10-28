@@ -51,14 +51,14 @@ parents and with expensive collision checks.
 
 Short smoke test:
 
-    py -3 -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --seed 4500 --output-dir results/squares-smoke-4500
+    py -3 -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --seed 4500 --log-every 1 --output-dir results/squares-smoke-4500-v2
 
 Full first experiment:
 
     py -3 -m examples.square_packing --iterations 10000 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 1000000 --history-depth 120 --absolute-regression 0.15 --significant-gain 0.000000001 --compression-attempts 8 --initial-side 5.0 --seed 4501 --log-every 50 --output-dir results/squares-10000-seed4501
 
 Because each parent produces 10 children, ten parents can require up to
-100 evaluations per generation. The evaluation budget may stop the experiment
+100 evaluations per generation. The engine now prints START once and a STEP line after each generation by default (log_every=1). Each STEP line reports best_L, delta_L, active parents, evaluations, generation_seconds and elapsed_seconds. No output between generation boundaries means a generation may still be computing expensive geometric operators. Use --log-every N to reduce console output.\n\nThe evaluation budget may stop the experiment
 before generation 10,000. Raise it if needed, at additional compute cost.
 
 ## Outputs
