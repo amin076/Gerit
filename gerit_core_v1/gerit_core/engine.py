@@ -42,6 +42,8 @@ class Settings:
     explorer_generations: int = 15
     max_explorers: int = 2
     explorer_uphill_probability: float = 0.20
+    learning_prior_trials: float = 20.0
+    learning_prior_successes: float = 0.2
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
@@ -82,6 +84,11 @@ class Settings:
             raise ValueError("Invalid explorer horizon or capacity")
         if not 0 <= self.explorer_uphill_probability <= 1:
             raise ValueError("Invalid explorer_uphill_probability")
+        if not (math.isfinite(self.learning_prior_trials)
+                and math.isfinite(self.learning_prior_successes)
+                and self.learning_prior_trials>0
+                and 0<self.learning_prior_successes<self.learning_prior_trials):
+            raise ValueError("Invalid learning prior")
         if self.stagnation_jump_threshold < 1:
             raise ValueError("stagnation_jump_threshold must be positive")
         for key in ("significant_gain", "goal_progress_floor", "min_distance", "absolute_regression"):
@@ -101,7 +108,9 @@ class Lineage:
     candidate: Candidate
     born: int
     progress: list  # improvement against its own parent, one value per generation
-    step_weights: list = None  # inherited independent step-size strategy
+    step_weights: list = None  # posterior mean success rates; inherited
+    step_attempts: list = None
+    step_successes: list = None
     stagnation: int = 0
     progress_velocity: float = 0.0
     progress_acceleration: float = 0.0
@@ -140,6 +149,7 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
+        self.operator_memory = {name:{"attempts":0,"successes":0} for name in operators}
         self.explorer_stats = {"spawned":0,"expired":0,"improved_baseline":0,
                                "uphill_steps":0,"rejected_duplicate":0,
                                "rejected_capacity":0}
@@ -218,6 +228,22 @@ class Search:
             self.pool[worst] = deepcopy(candidate)
         # Otherwise reject; no global pairwise distance recomputation.
 
+    def _success_rate(self,attempts,successes):
+        """Smoothed empirical reward with fixed prior; keeps rare wins in memory."""
+        return ((self.cfg.learning_prior_successes+successes) /
+                (self.cfg.learning_prior_trials+attempts))
+
+    def _new_lineage(self,candidate,born,ancestor=None):
+        if ancestor is None:
+            attempts=[0,0,0]
+            successes=[0,0,0]
+        else:
+            attempts=list(ancestor.step_attempts or [0,0,0])
+            successes=list(ancestor.step_successes or [0,0,0])
+        weights=[self._success_rate(a,w) for a,w in zip(attempts,successes)]
+        return Lineage(deepcopy(candidate),born,[],step_weights=weights,
+                       step_attempts=attempts,step_successes=successes)
+
     def _mutate(self, parent, intensity=1.0):
         names = list(self.operators)
         total = sum(self.weights.values())
@@ -236,14 +262,18 @@ class Search:
         if child is not None:
             self._remember(child)
         reward = 1.0 if child is not None and child.score < parent.score else 0.0
-        rate = self.cfg.learning_rate
-        self.weights[name] = max(0.02, (1-rate)*self.weights[name] + rate*(0.02+reward))
+        memory=self.operator_memory[name]
+        memory["attempts"]+=1
+        memory["successes"]+=int(reward)
+        self.weights[name]=self._success_rate(memory["attempts"],memory["successes"])
         return child
 
     def _sample_step(self,lineage):
         """A domain-free mutation intensity drawn from inheritable preferences."""
         if lineage.step_weights is None:
-            lineage.step_weights=[1.,1.,1.]
+            lineage.step_attempts=[0,0,0]
+            lineage.step_successes=[0,0,0]
+            lineage.step_weights=[self._success_rate(0,0)]*3
         w=lineage.step_weights
         floor=self.cfg.step_exploration
         probabilities=[(1-floor)*x/sum(w)+floor/3 for x in w]
@@ -270,8 +300,13 @@ class Search:
         if win:
             improvement=(parent.score-child.score)/max(1.,abs(parent.score))
             reward=min(1.,0.20+10.*improvement)
-        rate=self.cfg.lineage_step_learning_rate
-        lineage.step_weights[index]=max(0.05,(1-rate)*lineage.step_weights[index]+rate*(0.05+reward))
+        if lineage.step_attempts is None:
+            lineage.step_attempts=[0,0,0]
+            lineage.step_successes=[0,0,0]
+        lineage.step_attempts[index]+=1
+        lineage.step_successes[index]+=int(win)
+        lineage.step_weights[index]=self._success_rate(
+            lineage.step_attempts[index],lineage.step_successes[index])
 
     def _distance(self,a,b):
         value=float(self.problem.distance(a.state,b.state))
@@ -314,11 +349,11 @@ class Search:
             return False
         if candidate.score>self.best.score+cfg.absolute_regression:
             return False
-        self.parents.append(Lineage(deepcopy(candidate),self.generation,[],
-             step_weights=list(ancestor.step_weights or [1.,1.,1.]),
-             explorer_until=self.generation+cfg.explorer_generations,
-             explorer_baseline=ancestor.candidate.score,
-             explorer_birth_score=candidate.score))
+        explorer=self._new_lineage(candidate,self.generation,ancestor)
+        explorer.explorer_until=self.generation+cfg.explorer_generations
+        explorer.explorer_baseline=ancestor.candidate.score
+        explorer.explorer_birth_score=candidate.score
+        self.parents.append(explorer)
         self.explorer_stats["spawned"]+=1
         self.events.append({"generation":self.generation,"event":"explorer_spawn",
             "parents":len(self.parents),"horizon":cfg.explorer_generations,
@@ -383,9 +418,7 @@ class Search:
         # Branch strategies inherit from an existing lineage. Search policy is
         # separate from the domain-specific candidate state.
         ancestor=min(self.parents,key=lambda p:self.problem.distance(chosen.state,p.candidate.state))
-        inherited=list(ancestor.step_weights or [1.,1.,1.])
-        self.parents.append(Lineage(deepcopy(chosen),self.generation,[],
-                                    step_weights=inherited))
+        self.parents.append(self._new_lineage(chosen,self.generation,ancestor))
         self.events.append({"generation":self.generation,"event":"population_expand",
             "parents":len(self.parents),"source":source,"attempts":attempts,
             "rollback_generations":self.generation-gen if source=="history" else 0})
@@ -421,7 +454,7 @@ class Search:
         if (len(self.parents)==1 and not self._explorer_active(self.parents[0])
                 and self.best.score < self.parents[0].candidate.score):
             self.snapshots.append((self.generation,deepcopy(self.parents[0].candidate)))
-            self.parents[0]=Lineage(deepcopy(self.best),self.generation,[])
+            self.parents[0]=self._new_lineage(self.best,self.generation,self.parents[0])
         return True
 
     def _adjust_population(self):
@@ -485,6 +518,8 @@ class Search:
             "lineages":[{"born":p.born,"objective":self._objective(p.candidate.score),
                          "trend":sum(p.progress)/max(1,len(p.progress)),
                          "step_weights":p.step_weights,
+                         "step_attempts":p.step_attempts,
+                         "step_successes":p.step_successes,
                          "progress_velocity":p.progress_velocity,
                          "progress_acceleration":p.progress_acceleration,
                          "stagnation":p.stagnation,
@@ -492,6 +527,7 @@ class Search:
                          "explorer_baseline":p.explorer_baseline}
                         for p in self.parents],
             "operator_weights": self.weights,
+            "operator_memory": self.operator_memory,
             "operator_stats":self.operator_stats,
             "step_stats":self.step_stats,
             "explorer_stats":self.explorer_stats,
@@ -504,7 +540,7 @@ class Search:
         initial=self._eval(self.problem.initial(self.rng))
         if initial is None:
             raise ValueError("Initial state must be feasible and have finite objective")
-        self.parents=[Lineage(initial,0,[],step_weights=[1.,1.,1.])]
+        self.parents=[self._new_lineage(initial,0)]
         self._remember(initial)
         # Optional initial exploratory population: newly seeded lineages
         # inherit independent policy copies, while best-ever remains protected.
@@ -639,6 +675,8 @@ class Search:
                     "best_objective":self._objective(self.best.score),
                     "population":len(self.parents),"events":self.events,
                     "operator_stats":self.operator_stats,
+                    "operator_memory":self.operator_memory,
+                    "operator_weights":self.weights,
                     "step_stats":self.step_stats,
                     "explorer_stats":self.explorer_stats,
                     "population_diversity":self._population_diversity()})
