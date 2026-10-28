@@ -1,3 +1,38 @@
+## Rotation diagnostics and non-axis-aligned search
+
+The initial 5x5 geometry has unrotated unit squares, but rotated poses
+are allowed by the existing SAT validator and all square pose models.
+Earlier micro/structural/contact operators included rotation; however
+one-step strict parent improvement often selects unrotated incumbents,
+especially after a near-4 grid develops. Presence of angular proposals
+does not guarantee that the best archived packing rotates.
+
+A separate square-domain `rotate` operator now tries a substantial
+non-90-degree turn together with translation. It is subject to the
+same strict geometric validity tests and the general engine's existing
+candidate-history reservoir. Its default `--rotation-attempts 12` is
+tunable. The CMD result prints:
+- ROTATION_PROBES: calls and geometrically valid rotated proposals
+- ROTATION_STATISTICS: number of squares in best-ever packing oriented
+  >= 1 degree off an axis, and individual angles modulo 90 degrees
+
+This distinguishes *proposing valid angular solutions* from *selecting
+a rotated optimum*. It is entirely possible for valid rotated states
+to be proposed but never accepted as a better parent. In that event,
+the next research target is generic neutral/downhill lineage management,
+not disabling SAT or injecting a known good layout.
+
+Test after pull:
+
+    py -3 -m unittest discover -s tests -v
+
+Rotate-diagnostic quick run:
+
+    py -3 -u -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 5 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 2 --rotation-attempts 12 --log-every 1 --seed 4510 --output-dir results/squares-rotation-4510
+
+Do not interpret a rotated trial as a proof of a better optimum; results
+must be compared with equal evaluation budgets and independent seeds.
+
 ## Updated goal-gap objective and output (October 2026)
 
 The 12-square adapter now minimizes **unused area**, `L*L - 12`, rather than
