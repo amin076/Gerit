@@ -21,16 +21,16 @@ guarantee a new feasible branch in an arbitrary problem.
 Every `population_adjust_interval` generations Gerit measures the global
 best objective reduction over that interval. An exponential moving reference
 of recent *positive* interval gains is updated with `progress_smoothing`.
-The ratio `gain / max(reference_gain, significant_gain)` drives a three-zone
+The ratio `gain / reference_gain` drives a three-zone
 controller:
 - ratio < `low_progress_ratio`: attempt to add one parent
 - ratio >= `high_progress_ratio`: remove one parent (if more than one)
 - otherwise: keep population unchanged
 
-`significant_gain` is a numerical scale floor, not a fixed declaration
-that all later tiny gains are worthless. Set it small for problems whose
-meaningful gains are microscopic; more robust problem-dependent normalized
-objective scales and noise estimation remain research work.
+`significant_gain` is ONLY a fallback scale when the very first measured window
+has no positive gain, not a fixed cutoff for later improvements. A sequence of
+microscopic positive gains can therefore be recognized as good progress.
+Problem-dependent noise estimation remains research work.
 Zero-gain intervals do not erase the moving positive-gain reference.
 The controller never changes population by more than one at a decision.
 Population is between 1 and `max_parents`.
