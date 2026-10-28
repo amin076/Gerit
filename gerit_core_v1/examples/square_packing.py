@@ -1,0 +1,140 @@
+"""12 rigid unit squares in the smallest axis-aligned square, using generic Gerit.
+
+Run from the repository's gerit_core_v1 directory:
+  py -3 -m examples.square_packing --iterations 10000 --max-parents 10 ...
+All domain geometry and mutation logic lives here; engine.py stays generic.
+"""
+from __future__ import annotations
+
+import argparse
+from dataclasses import fields
+import math
+from pathlib import Path
+import sys
+
+# Import the repository's existing geometry from either a source checkout or module run.
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing
+from gerit.selection import packing_distance
+from gerit.local_compression import CompressionSettings, compress_valid
+from gerit.adaptive_v4 import propose_micro, propose_reconfigure
+from gerit.contact_relocation import propose_contact_relocate
+from gerit_core import Search, Settings
+
+
+class TwelveSquares:
+    """Adapter: constraints and objective belong to THIS problem, not Gerit."""
+    def __init__(self, count=12, initial_side=5.0):
+        if count != 12:
+            raise ValueError("This example supports exactly twelve unit squares")
+        if initial_side < 4.0:
+            raise ValueError("Fresh 4-by-3 separated start needs initial_side >= 4")
+        self.count = count
+        self.initial_side = initial_side
+
+    def initial(self, rng):
+        # A genuine valid 5-by-5 starting envelope when initial_side=5:
+        # 4 columns, 3 rows; gaps keep the squares strictly non-overlapping.
+        side=self.initial_side
+        x_step=(side-1.)/3
+        y_step=(side-1.)/2
+        squares=tuple(Square(.5+i*x_step,.5+j*y_step,0.)
+                      for j in range(3) for i in range(4))
+        packing=Packing(squares,side)
+        assert validate_packing(packing,tolerance=0.).valid
+        return packing
+
+    def evaluate(self, state):
+        # Side and side^2 have identical minimizers for positive sides.
+        return state.container_side
+
+    def feasible(self, state):
+        return (isinstance(state,Packing) and len(state.squares)==self.count
+                and validate_packing(state,tolerance=0.).valid)
+
+    def distance(self,a,b):
+        return packing_distance(a,b)
+
+    def encode(self,state):
+        return {'container_side':state.container_side,
+                'squares':[{'x':s.x,'y':s.y,'angle':s.angle} for s in state.squares]}
+
+    def decode(self,payload):
+        return Packing(tuple(Square(**p) for p in payload['squares']),
+                       float(payload['container_side']))
+
+
+class PackingOperators:
+    """Reuses the older Gerit geometric operators as swappable domain actions."""
+    def __init__(self, *, cap_margin=.15, compression_attempts=8):
+        if cap_margin < 0 or compression_attempts < 0:
+            raise ValueError("cap-margin and compression-attempts must be nonnegative")
+        self.cap_margin=cap_margin
+        self.compressor=CompressionSettings(attempts_per_child=max(1,compression_attempts))
+        self.compression_attempts=compression_attempts
+
+    def _finish(self,parent,raw,rng):
+        if raw is None:
+            return parent
+        if self.compression_attempts:
+            packed,_=compress_valid(raw,rng,self.compressor,
+                                    side_cap=parent.container_side+self.cap_margin)
+            return packed
+        return raw
+
+    def micro(self,parent,rng,intensity):
+        # Legacy geometric operators accept a side cap, not an intensity.
+        proposed,_=propose_micro(parent,rng,parent.container_side+self.cap_margin)
+        return self._finish(parent,proposed,rng)
+
+    def contact(self,parent,rng,intensity):
+        proposed,_=propose_contact_relocate(parent,rng,
+            parent.container_side+self.cap_margin,attempts=20)
+        return self._finish(parent,proposed,rng)
+
+    def restructure(self,parent,rng,intensity):
+        proposed,_=propose_reconfigure(parent,rng,
+                                      parent.container_side+self.cap_margin)
+        return self._finish(parent,proposed,rng)
+
+    def compress(self,parent,rng,intensity):
+        # Direct local search, including single-square and coordinated motions.
+        settings=CompressionSettings(attempts_per_child=max(1,self.compression_attempts*2))
+        packed,_=compress_valid(parent,rng,settings,
+                                side_cap=parent.container_side+self.cap_margin)
+        return packed
+
+
+def main():
+    parser=argparse.ArgumentParser(description="Gerit generic core + 12-square packing adapter")
+    for item in fields(Settings):
+        default=item.default
+        flag="--"+item.name.replace("_","-")
+        if isinstance(default,bool):
+            parser.add_argument(flag,action="store_true",default=default)
+        else:
+            parser.add_argument(flag,type=type(default),default=default)
+    parser.add_argument("--initial-side",type=float,default=5.)
+    parser.add_argument("--cap-margin",type=float,default=.15)
+    parser.add_argument("--compression-attempts",type=int,default=8)
+    args=parser.parse_args()
+    if args.maximize:
+        parser.error("square packing minimizes container side: do not use --maximize")
+    cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
+    problem=TwelveSquares(initial_side=args.initial_side)
+    ops=PackingOperators(cap_margin=args.cap_margin,
+                         compression_attempts=args.compression_attempts)
+    result=Search(problem,{'micro':ops.micro,'contact':ops.contact,
+                           'restructure':ops.restructure,'compress':ops.compress},cfg).run()
+    print('DONE generations={} evaluations={} L={:.12f} area={:.12f} '
+          'valid={} state={}'.format(
+          result.generations,result.evaluations,result.best_objective,
+          result.best_objective**2,problem.feasible(result.best_state),
+          (Path(cfg.output_dir)/"best.json").resolve()),flush=True)
+
+
+if __name__=="__main__":
+    main()
