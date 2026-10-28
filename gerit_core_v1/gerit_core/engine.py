@@ -157,16 +157,22 @@ class Search:
             return
         if any(self.problem.distance(candidate.state, x.state) < cfg.min_distance for x in self.pool):
             return
-        self.pool.append(deepcopy(candidate))
-        if len(self.pool) > cfg.reservoir_size:
-            # Preserve the best pool candidate and discard the least diverse other.
-            best = min(range(len(self.pool)), key=lambda i: self.pool[i].score)
-            candidates = [i for i in range(len(self.pool)) if i != best]
-            drop = min(candidates, key=lambda i: min(
-                self.problem.distance(self.pool[i].state, self.pool[j].state)
-                for j in range(len(self.pool)) if j != i
-            ))
-            self.pool.pop(drop)
+        if len(self.pool) < cfg.reservoir_size:
+            self.pool.append(deepcopy(candidate))
+            return
+        # O(N) memory admission: avoid repeated all-pairs O(N^2) diversity scans.
+        # Keep the archive (self.best) separately and retain a mix of quality
+        # and novelty in this bounded reservoir.
+        if not self.pool:
+            return
+        nearest = min(range(len(self.pool)),
+                      key=lambda i: self.problem.distance(candidate.state,self.pool[i].state))
+        worst = max(range(len(self.pool)),key=lambda i:self.pool[i].score)
+        if candidate.score < self.pool[nearest].score:
+            self.pool[nearest] = deepcopy(candidate)
+        elif candidate.score < self.pool[worst].score:
+            self.pool[worst] = deepcopy(candidate)
+        # Otherwise reject; no global pairwise distance recomputation.
 
     def _mutate(self, parent, intensity=1.0):
         names = list(self.operators)
