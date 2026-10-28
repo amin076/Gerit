@@ -50,6 +50,19 @@ single-parent baseline, run:
 See [docs/RASTRIGIN_BENCHMARK.md](docs/RASTRIGIN_BENCHMARK.md). This is a
 benchmark, not evidence of global convergence until results are inspected.
 
+## Twelve-square packing problem adapter (fresh 5 x 5 start)
+
+The new `examples.square_packing` plugs the repository's existing rigorous
+numerical square geometry into the generic Gerit engine. It does not modify
+the old 12-square runner. Start with a quick smoke test; the 10,000-generation
+configuration is computationally heavy.
+
+    py -3 -m examples.square_packing --iterations 100 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 10000 --compression-attempts 4 --seed 4500 --output-dir results/squares-smoke-4500
+
+    py -3 -m examples.square_packing --iterations 10000 --children-per-parent 10 --max-parents 10 --population-adjust-interval 20 --evaluation-budget 1000000 --history-depth 120 --absolute-regression 0.15 --significant-gain 0.000000001 --compression-attempts 8 --initial-side 5.0 --seed 4501 --log-every 50 --output-dir results/squares-10000-seed4501
+
+Read [docs/SQUARE_PACKING.md](docs/SQUARE_PACKING.md).
+
 ## Limitations
 
 This first independent core does NOT yet run or resume the 12-square experiment.
