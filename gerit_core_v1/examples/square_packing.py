@@ -66,6 +66,9 @@ class TwelveSquares:
     objective_lower_bound = 0.0  # unused area cannot be negative (certified lower bound)
 
     def initial(self, rng):
+        if hasattr(self,"warm_start"):
+            return self.warm_start
+
         """Start from feasible random positions and orientations, NOT a grid.
 
         Sequential rejection sampling validates each partial placement under
@@ -178,6 +181,27 @@ class PackingOperators:
             self.learned_improved+=1
         return final
 
+    def scaled_pose(self,parent,rng,intensity):
+        """Intensity-aware domain move; the generic engine never sees x/y/angle."""
+        if intensity<=0:
+            return parent
+        for _ in range(18):
+            squares=list(parent.squares)
+            index=rng.randrange(len(squares))
+            old=squares[index]
+            # A log-continuous displacement and rotation, both scaled by
+            # the generic dimensionless intensity (including jump mode).
+            magnitude=rng.uniform(.012,.16)*intensity
+            angle_change=rng.uniform(-.12,.12)*intensity
+            squares[index]=Square(old.x+rng.gauss(0,magnitude),
+                                  old.y+rng.gauss(0,magnitude),
+                                  old.angle+angle_change)
+            raw=minimum_bounding_square(tuple(squares))
+            if (raw.container_side<=parent.container_side+self.cap_margin
+                    and validate_packing(raw,tolerance=0.).valid):
+                return self._finish(parent,raw,rng)
+        return parent
+
     def micro(self,parent,rng,intensity):
         # Legacy geometric operators accept a side cap, not an intensity.
         proposed,_=propose_micro(parent,rng,parent.container_side+self.cap_margin)
@@ -226,6 +250,8 @@ def main():
     parser.add_argument("--initial-angle-mode",choices=("random","zero"),default="random")
     parser.add_argument("--initial-placement-attempts",type=int,default=2000)
     parser.add_argument("--initial-restarts",type=int,default=200)
+    parser.add_argument("--initial-state",type=str,default=None,
+                        help="path to prior best.json; load its full geometry, not a random start")
     parser.add_argument("--operator-set",choices=("legacy-hybrid","basic"),default="legacy-hybrid")
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
@@ -244,6 +270,16 @@ def main():
                           random_angles=(args.initial_angle_mode=="random"),
                           placement_attempts=args.initial_placement_attempts,
                           restart_attempts=args.initial_restarts)
+    if args.initial_state:
+        source=Path(args.initial_state)
+        payload=__import__("json").loads(source.read_text(encoding="utf8"))
+        state=problem.decode(payload["state"] if "state" in payload else payload)
+        if not problem.feasible(state):
+            parser.error("The supplied initial-state geometry is invalid")
+        problem.warm_start=state
+        print("WARM_START",{"path":str(source.resolve()),
+                            "side":state.container_side,
+                            "empty_area":problem.evaluate(state)},flush=True)
     print("INITIAL_CONFIGURATION",{
         "mode":args.initial_mode,"side":problem.initial_side,
         "reference_side":math.ceil(math.sqrt(problem.count)),
@@ -254,10 +290,10 @@ def main():
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts,
                          rotation_attempts=args.rotation_attempts)
-    recorder=PackingRecorder(cfg.output_dir,problem.initial_side,
+    recorder=PackingRecorder(cfg.output_dir, max(5.0,problem.warm_start.container_side+0.3) if args.initial_state else problem.initial_side,
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every)
-    operators={'micro':ops.micro,'contact':ops.contact,
+    operators={'scaled_pose':ops.scaled_pose,'micro':ops.micro,'contact':ops.contact,
                'restructure':ops.restructure,'rotate':ops.rotate,
                'compress':ops.compress}
     if args.operator_set=="legacy-hybrid":
