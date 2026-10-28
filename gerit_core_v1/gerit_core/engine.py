@@ -260,8 +260,8 @@ class Search:
             return
         gain=max(0.0,self.checkpoint_score-self.best.score)
         if self.reference_gain is None:
-            self.reference_gain=max(gain,cfg.significant_gain)
-        reference=max(self.reference_gain,cfg.significant_gain,1e-15)
+            self.reference_gain=gain if gain>0 else max(cfg.significant_gain,1e-300)
+        reference=max(self.reference_gain,1e-300)
         ratio=gain/reference
         if gain <= 0 or ratio < cfg.low_progress_ratio:
             action="expand" if len(self.parents)<cfg.max_parents else "hold"
