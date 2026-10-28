@@ -1,3 +1,40 @@
+## Traceable global-best records and late lineage credit (2026-10-29)
+
+Each branch now has a stable, monotonically allocated `lineage_id`
+and `parent_lineage_id`. Every new global-best evaluation records
+`generation`, `evaluation`, objective and previous objective,
+`lineage_id`, source operator, dimensionless intensity, originating
+explorer operator and move type (regular/jump/initial). The most
+recent record's origin is written to `best.json` and `status.json`;
+the ordered, complete records list is written into
+`run_summary.json` and the event log. This provides provenance of
+the direct move that **produced** a global record, not a mathematical
+proof that an early ancestor move caused it.
+
+An exploratory lineage preserves its origin after its initial
+protected `explorer_generations` interval expires. If that same
+living lineage later first beats its **original parent baseline**,
+the engine records `explorer_late_success` and applies a bounded
+credit to the initiating operator. The lineage can receive this
+late credit only once; any on-time credit already received is
+tracked to prevent duplicate reward. Branch removal ends its
+opportunity to receive late credit. The global best remains
+protected throughout, independently of which lineage currently
+owns it.
+
+Run tests and continue 500 generations using the previous best:
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-dual-memory-500-4519/best.json --iterations 500 --initial-parents 1 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --evaluation-budget 60000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4520 --output-dir results/squares-provenance-500-4520
+
+Expected warm-start square side: `4.048362633923`.
+This restores the final geometry, not the prior policies or RNG state.
+
 ## Dual-timescale, quality/cost and delayed-credit operator learning (2026-10-29)
 
 The generic engine now mixes a persistent lifetime utility mean with
