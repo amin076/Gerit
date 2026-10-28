@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from examples.square_packing import TwelveSquares, PackingOperators
+from examples.packing_rotation import rotate_probe,rotation_statistics
 from gerit_core import Search, Settings
 from examples.packing_visualization import PackingRecorder
 
@@ -22,6 +23,20 @@ class PackingTests(unittest.TestCase):
         for op in (actions.micro, actions.contact, actions.restructure, actions.compress):
             result = op(state, random.Random(7), 1.0)
             self.assertTrue(problem.feasible(result))
+
+    def test_rotated_valid_candidate_from_fresh_start(self):
+        import random
+        problem=TwelveSquares(initial_side=5.)
+        start=problem.initial(None)
+        candidate=rotate_probe(start,random.Random(19),1.,attempts=200,cap_margin=.15)
+        self.assertTrue(problem.feasible(candidate))
+        self.assertGreater(rotation_statistics(candidate)["rotated_squares"],0,
+                           "Fresh 5x5 packing should permit genuine rotation")
+
+    def test_orientation_modulo_quarter_turn(self):
+        from gerit.geometry import Square, Packing
+        packing=Packing((Square(1.,1.,1.5707963267948966),),2.)
+        self.assertEqual(rotation_statistics(packing)["rotated_squares"],0)
 
     def test_saved_geometry(self):
         with TemporaryDirectory() as temp:
