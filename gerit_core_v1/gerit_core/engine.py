@@ -444,6 +444,26 @@ class Search:
                                   for p in self.parents[:-1])})
         return True
 
+    def _credit_late_explorer(self,lineage,score):
+        """One reward after trial expiry, when a living explorer beats its baseline."""
+        if (not lineage.explorer_origin_operator or lineage.explorer_until!=0
+                or lineage.explorer_credited
+                or score>=lineage.explorer_credit_baseline):
+            return False
+        gain=(lineage.explorer_credit_baseline-score)/max(
+            1.,abs(lineage.explorer_credit_baseline))
+        amount=min(1.,self.cfg.utility_gain_scale*gain)
+        self._credit_operator(lineage.explorer_origin_operator,amount)
+        lineage.explorer_credited=True
+        event={"generation":self.generation,"event":"explorer_late_success",
+               "lineage_id":lineage.lineage_id,
+               "origin_operator":lineage.explorer_origin_operator,
+               "baseline":lineage.explorer_credit_baseline,
+               "final_score":score,"credit_input":amount}
+        self.events.append(event)
+        self.late_credit_events.append(event)
+        return True
+
     def _remember_history(self):
         """Store earlier parent states for explicit backtracking after a stall."""
         for lineage in self.parents:
@@ -726,21 +746,7 @@ class Search:
                     # improvement. Credit its originating move at most once,
                     # only when the active lineage actually crosses its
                     # original parent's baseline (not a global-best inference).
-                    if (lineage.explorer_origin_operator and lineage.explorer_until==0
-                            and not lineage.explorer_credited
-                            and child.score<lineage.explorer_credit_baseline):
-                        gain=(lineage.explorer_credit_baseline-child.score)/max(
-                            1.,abs(lineage.explorer_credit_baseline))
-                        amount=min(1.,cfg.utility_gain_scale*gain)
-                        self._credit_operator(lineage.explorer_origin_operator,amount)
-                        lineage.explorer_credited=True
-                        event={"generation":step,"event":"explorer_late_success",
-                               "lineage_id":lineage.lineage_id,
-                               "origin_operator":lineage.explorer_origin_operator,
-                               "baseline":lineage.explorer_credit_baseline,
-                               "final_score":child.score,"credit_input":amount}
-                        self.events.append(event)
-                        self.late_credit_events.append(event)
+                    self._credit_late_explorer(lineage,child.score)
                     if lineage.explorer_until and step>=lineage.explorer_until:
                         self.explorer_stats["expired"]+=1
                         successful=(child.score<lineage.explorer_baseline)
