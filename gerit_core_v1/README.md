@@ -24,6 +24,22 @@ name -> (state,rng,intensity) -> new_state.
 Every Settings parameter has a default and can be passed from a CLI or Python.
 Output files: best.json, status.json and run_summary.json.
 
+## Adaptive population and backtracking (v0.2 experimental)
+
+The search engine now adds or removes **one lineage per decision interval** (default
+20 generations), using a local moving measure of progress. Alternative branches
+can return to historical parent states from earlier generations. Each lineage's
+recent improvement trend matters when reducing the population, alongside current
+objective quality. See [docs/ADAPTIVE_SEARCH.md](docs/ADAPTIVE_SEARCH.md).
+
+Example with explicit gradual adjustment:
+
+    py -3 -m examples.quadratic --iterations 1000 --children-per-parent 10 --max-parents 5 --population-adjust-interval 20 --trend-weight 0.35 --history-depth 120 --evaluation-budget 20000 --seed 2716 --output-dir results/demo-adaptive
+
+Run tests:
+
+    py -3 -m unittest discover -s tests -v
+
 ## Limitations
 
 This first independent core does NOT yet run or resume the 12-square experiment.
