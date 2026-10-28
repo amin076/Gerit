@@ -279,8 +279,11 @@ class Search:
             gap=max(0.,self.checkpoint_score-self.goal_score)
             if self.best.score < self.goal_score-1e-9*max(1.,abs(self.goal_score)):
                 raise ValueError("Problem objective fell below its asserted lower bound")
-            ratio=gain/max(gap,cfg.goal_progress_floor)
-            reference=gap
+            progress_fraction=gain/max(gap,cfg.goal_progress_floor)
+            if self.reference_gain is None:
+                self.reference_gain=max(progress_fraction,cfg.goal_progress_floor)
+            reference=self.reference_gain
+            ratio=progress_fraction/max(reference,cfg.goal_progress_floor)
             progress_mode="bound_fraction"
         else:
             if self.reference_gain is None:
@@ -301,8 +304,11 @@ class Search:
             "gain":gain,"reference":reference,"ratio":ratio,
             "progress_mode":progress_mode,"goal_gap":gap,
             "action":action,"parents":len(self.parents)})
-        if gain>0 and self.goal_score is None:
-            alpha=cfg.progress_smoothing
+        alpha=cfg.progress_smoothing
+        if self.goal_score is not None:
+            # Decay even through stalls: an early big win must not dominate forever.
+            self.reference_gain=(1-alpha)*self.reference_gain+alpha*progress_fraction
+        elif gain>0:
             self.reference_gain=(1-alpha)*self.reference_gain+alpha*gain
         self.checkpoint_step=self.generation
         self.checkpoint_score=self.best.score
