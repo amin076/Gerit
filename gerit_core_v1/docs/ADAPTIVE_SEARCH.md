@@ -1,3 +1,57 @@
+## Dual-timescale, quality/cost and delayed-credit operator learning (2026-10-29)
+
+The generic engine now mixes a persistent lifetime utility mean with
+a bounded recent learning window (120 calls per operator, 45% weighting).
+Recent changes in effectiveness therefore influence new choices without
+erasing the cumulative evidence. All operators retain a nonzero
+selection probability via the existing `exploration_floor`.
+
+The per-attempt utility measures **normalized objective gain** and
+**measured time cost**. The score is zero for non-improving proposals;
+for an improving proposal it is a capped function of the relative
+improvement, divided by `1 + elapsed / mean_operator_elapsed`.
+The normalization uses only generic scores and wall-clock time: the
+core has no knowledge of positions, rotations, or square geometry.
+Execution-time observations may vary across machines, so identical
+random seeds need not yield identical results when runtime-sensitive
+operator selection changes.
+
+An exploratory lineage now remembers the **operator that created its
+initial jump**. If the explorer finishes its protected multi-generation
+trial better than its origin parent's starting score, a bounded delayed
+credit is allocated to that *originating* operator. This is a heuristic
+credit assignment, not a full causal attribution to every intermediate
+move. Expiring explorers that do not surpass their baseline get no
+delayed reward. Explorer success and operator attribution appear in
+`explorer_complete` events.
+
+Settings:
+- `recent_learning_window=120`
+- `recent_learning_mix=0.45`
+- `utility_gain_scale=25.0`
+- `delayed_credit_scale=0.5`
+
+In `status.json` and `run_summary.json`, `operator_memory`
+now contains `attempts`, `successes`, `utility_sum`,
+`recent_utilities` and `delayed_credit`. An operator's
+`operator_weights` is a mixed posterior utility preference, **not**
+a direct probability until normalized with the exploration floor.
+
+### Windows CMD smoke test: 500 generations from latest saved best
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-persistent-learning-500-4518/best.json --iterations 500 --initial-parents 1 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --evaluation-budget 60000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4519 --output-dir results/squares-dual-memory-500-4519
+
+Warm start should print an initial enclosing square side of about
+`4.050165559267`. The previous best state is the starting geometry,
+but no prior learning state is resumed. Keep earlier run directories
+for comparison.
+
 ## Persistent evidence-based learning memory (2026-10-29)
 
 The earlier EMA reward update frequently drove **every** operator weight to
