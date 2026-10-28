@@ -384,8 +384,8 @@ class Search:
                     current_best=self._objective(self.best.score)
                     improvement=(previous_best-current_best) if not cfg.maximize else (current_best-previous_best)
                     print(f"STEP {step}/{cfg.iterations} "
-                          f"best_L={current_best:.12f} "
-                          f"delta_L={max(0.,improvement):.12f} "
+                          f"best_objective={current_best:.12f} "
+                          f"delta_objective={max(0.,improvement):.12f} "
                           f"parents={len(self.parents)} "
                           f"evaluations={self.evaluations}/{cfg.evaluation_budget} "
                           f"generation_seconds={time.perf_counter()-generation_started:.1f} "
