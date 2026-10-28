@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import math
 import random
+import time
 
 
 @dataclass
@@ -32,7 +33,7 @@ class Settings:
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
-    log_every: int = 100
+    log_every: int = 1
     output_dir: str = "results/gerit-core"
 
     def validate(self, operators):
@@ -304,12 +305,19 @@ class Search:
         self.parents=[Lineage(initial,0,[])]
         self._remember(initial)
         self.checkpoint_score=self.best.score
+        started_at=time.perf_counter()
+        previous_best=self._objective(self.best.score)
+        print(f"START generations={cfg.iterations} initial_best={previous_best:.12f} "
+              f"children={cfg.children_per_parent} max_parents={cfg.max_parents} "
+              f"evaluation_budget={cfg.evaluation_budget}",flush=True)
         try:
             for step in range(1,cfg.iterations+1):
                 if self.evaluations>=cfg.evaluation_budget:
                     self.events.append({"generation":self.generation,"event":"budget_exhausted"})
                     break
                 self.generation=step
+                generation_started=time.perf_counter()
+                previous_best=self._objective(self.best.score)
                 self._remember_history()
                 next_parents=[]
                 for lineage in self.parents:
@@ -336,8 +344,15 @@ class Search:
                 if step%cfg.checkpoint_every==0:
                     self._status()
                 if step==1 or step%cfg.log_every==0:
-                    print(f"STEP {step}/{cfg.iterations} best={self._objective(self.best.score):.12g} "
-                          f"parents={len(self.parents)} evaluations={self.evaluations}/{cfg.evaluation_budget}",flush=True)
+                    current_best=self._objective(self.best.score)
+                    improvement=(previous_best-current_best) if not cfg.maximize else (current_best-previous_best)
+                    print(f"STEP {step}/{cfg.iterations} "
+                          f"best_L={current_best:.12f} "
+                          f"delta_L={max(0.,improvement):.12f} "
+                          f"parents={len(self.parents)} "
+                          f"evaluations={self.evaluations}/{cfg.evaluation_budget} "
+                          f"generation_seconds={time.perf_counter()-generation_started:.1f} "
+                          f"elapsed_seconds={time.perf_counter()-started_at:.1f}",flush=True)
         finally:
             self._save_best()
             if self.best is not None:
