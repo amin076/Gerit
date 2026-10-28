@@ -29,12 +29,22 @@ from examples.packing_visualization import PackingRecorder
 from examples.packing_rotation import rotate_probe, rotation_statistics
 
 
+def default_initial_side(count):
+    """Four times the grid reference area: side = 2 * ceil(sqrt(count))."""
+    if not isinstance(count,int) or count < 1:
+        raise ValueError("count must be a positive integer")
+    return float(2 * math.ceil(math.sqrt(count)))
+
+
 class TwelveSquares:
     """Adapter: constraints and objective belong to THIS problem, not Gerit."""
-    def __init__(self, count=12, initial_side=6.0, initial_mode="random",
-                 random_angles=True, placement_attempts=2000, restart_attempts=200):
+    def __init__(self, count=12, initial_side=None, initial_mode="random",
+                 random_angles=True, placement_attempts=2000, restart_attempts=200,
+                 min_center_distance=2.0):
         if count != 12:
             raise ValueError("This example supports exactly twelve unit squares")
+        if initial_side is None:
+            initial_side=default_initial_side(count)
         if initial_side <= 0 or not math.isfinite(initial_side):
             raise ValueError("initial_side must be positive and finite")
         if initial_mode not in ("random", "grid"):
@@ -43,6 +53,9 @@ class TwelveSquares:
             raise ValueError("initial placement attempts and restarts must be positive")
         if initial_mode == "grid" and initial_side < 4.0:
             raise ValueError("grid initialization needs initial_side >= 4")
+        if not math.isfinite(min_center_distance) or min_center_distance < math.sqrt(2):
+            raise ValueError("min_center_distance must be >= sqrt(2) for guaranteed no overlap")
+        self.min_center_distance=float(min_center_distance)
         self.count=count
         self.initial_side=float(initial_side)
         self.initial_mode=initial_mode
@@ -81,6 +94,9 @@ class TwelveSquares:
                         continue
                     square=Square(rng.uniform(half_extent,side-half_extent),
                                   rng.uniform(half_extent,side-half_extent),angle)
+                    if any((square.x-prev.x)**2+(square.y-prev.y)**2
+                           < self.min_center_distance**2 for prev in placed):
+                        continue
                     trial=Packing(tuple(placed+[square]),side)
                     if validate_packing(trial,tolerance=0.).valid:
                         placed.append(square)
@@ -93,7 +109,8 @@ class TwelveSquares:
                     return packing
         raise RuntimeError(
             f"Could not place {self.count} random squares within L={side}; "
-            "try --initial-side 6.5 or 7, or increase --initial-restarts")
+            "increase --initial-side, lower --initial-min-center-distance "
+            "(not below sqrt(2)), or increase --initial-restarts")
 
     def evaluate(self, state):
         # Empty area is exactly L^2 - 12. Same minimizer as L and L^2.
@@ -201,7 +218,10 @@ def main():
             parser.add_argument(flag,action="store_true",default=default)
         else:
             parser.add_argument(flag,type=type(default),default=default)
-    parser.add_argument("--initial-side",type=float,default=6.)
+    parser.add_argument("--initial-side",type=float,default=None,
+                        help="default: 2*ceil(sqrt(number_of_squares)); 8 for 12 squares")
+    parser.add_argument("--initial-min-center-distance",type=float,default=2.,
+                        help="minimum initial center distance in unit-square side lengths")
     parser.add_argument("--initial-mode",choices=("random","grid"),default="random")
     parser.add_argument("--initial-angle-mode",choices=("random","zero"),default="random")
     parser.add_argument("--initial-placement-attempts",type=int,default=2000)
@@ -219,19 +239,22 @@ def main():
         parser.error("square packing minimizes container side: do not use --maximize")
     cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
     problem=TwelveSquares(initial_side=args.initial_side,
+                          min_center_distance=args.initial_min_center_distance,
                           initial_mode=args.initial_mode,
                           random_angles=(args.initial_angle_mode=="random"),
                           placement_attempts=args.initial_placement_attempts,
                           restart_attempts=args.initial_restarts)
     print("INITIAL_CONFIGURATION",{
-        "mode":args.initial_mode,"side":args.initial_side,
+        "mode":args.initial_mode,"side":problem.initial_side,
+        "reference_side":math.ceil(math.sqrt(problem.count)),
+        "min_center_distance":problem.min_center_distance,
         "angle_mode":args.initial_angle_mode,
         "placement_attempts":args.initial_placement_attempts,
         "restarts":args.initial_restarts},flush=True)
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts,
                          rotation_attempts=args.rotation_attempts)
-    recorder=PackingRecorder(cfg.output_dir,args.initial_side,
+    recorder=PackingRecorder(cfg.output_dir,problem.initial_side,
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every)
     operators={'micro':ops.micro,'contact':ops.contact,
