@@ -15,7 +15,8 @@ class Settings:
     children_per_parent: int = 10
     max_parents: int = 5
     stagnation_window: int = 200
-    significant_gain: float = 1e-6
+    significant_gain: float = 1e-6  # fallback only when no goal/lower-bound is provided
+    goal_progress_floor: float = 1e-12
     competition_generations: int = 200  # lineage trend memory horizon (legacy CLI flag)
     population_adjust_interval: int = 20
     history_depth: int = 120
@@ -53,7 +54,7 @@ class Settings:
             raise ValueError("Need 0 <= low_progress_ratio < high_progress_ratio")
         if not 0 <= self.trend_weight <= 1:
             raise ValueError("trend_weight must be in [0,1]")
-        for key in ("significant_gain", "min_distance", "absolute_regression"):
+        for key in ("significant_gain", "goal_progress_floor", "min_distance", "absolute_regression"):
             value = getattr(self, key)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"Invalid {key}")
@@ -88,10 +89,15 @@ class Search:
     Internal scores are minimized; maximize=True negates the supplied objective.
     """
 
-    def __init__(self, problem, operators, settings=None):
+    def __init__(self, problem, operators, settings=None, on_generation=None):
         self.cfg = settings or Settings()
         self.cfg.validate(operators)
         self.problem = problem
+        self.on_generation = on_generation  # optional domain-level output observer
+        bound = getattr(problem, "objective_lower_bound", None)
+        self.goal_score = None if bound is None else (-float(bound) if self.cfg.maximize else float(bound))
+        if self.goal_score is not None and not math.isfinite(self.goal_score):
+            raise ValueError("objective_lower_bound must be finite")
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
@@ -107,6 +113,7 @@ class Search:
         self.competition_end = None  # deprecated; retained for existing output readers
         self.snapshots = []          # historical parent states, independent of geometry
         self.reference_gain = None   # adaptive local progress scale
+        self.previous_goal_gap = None
         self.output = Path(self.cfg.output_dir)
         self.output.mkdir(parents=True, exist_ok=True)
 
@@ -256,15 +263,31 @@ class Search:
         return True
 
     def _adjust_population(self):
-        """Use a LOCAL rolling reference; early giant gains do not set a fixed scale."""
+        """Problem-independent progress controller.
+
+        If a valid objective lower bound is declared, use fraction of the
+        remaining *certified* objective gap closed in the last window.
+        Otherwise compare consecutive positive gains on a moving local scale.
+        Neither square geometry nor units are known to this engine.
+        """
         cfg=self.cfg
         if self.generation-self.checkpoint_step < cfg.population_adjust_interval:
             return
-        gain=max(0.0,self.checkpoint_score-self.best.score)
-        if self.reference_gain is None:
-            self.reference_gain=gain if gain>0 else max(cfg.significant_gain,1e-300)
-        reference=max(self.reference_gain,1e-300)
-        ratio=gain/reference
+        gain=max(0.,self.checkpoint_score-self.best.score)
+        gap=None
+        if self.goal_score is not None:
+            gap=max(0.,self.checkpoint_score-self.goal_score)
+            if self.best.score < self.goal_score-1e-9*max(1.,abs(self.goal_score)):
+                raise ValueError("Problem objective fell below its asserted lower bound")
+            ratio=gain/max(gap,cfg.goal_progress_floor)
+            reference=gap
+            progress_mode="bound_fraction"
+        else:
+            if self.reference_gain is None:
+                self.reference_gain=gain if gain>0 else max(cfg.significant_gain,1e-300)
+            reference=max(self.reference_gain,1e-300)
+            ratio=gain/reference
+            progress_mode="rolling_gain"
         if gain <= 0 or ratio < cfg.low_progress_ratio:
             action="expand" if len(self.parents)<cfg.max_parents else "hold"
             if action=="expand":
@@ -276,11 +299,11 @@ class Search:
             action="hold"
         self.events.append({"generation":self.generation,"event":"progress_check",
             "gain":gain,"reference":reference,"ratio":ratio,
+            "progress_mode":progress_mode,"goal_gap":gap,
             "action":action,"parents":len(self.parents)})
-        # Adapt to the current stage; zero-gain windows do not erase the reference.
-        if gain>0:
-            a=cfg.progress_smoothing
-            self.reference_gain=(1-a)*self.reference_gain+a*gain
+        if gain>0 and self.goal_score is None:
+            alpha=cfg.progress_smoothing
+            self.reference_gain=(1-alpha)*self.reference_gain+alpha*gain
         self.checkpoint_step=self.generation
         self.checkpoint_score=self.best.score
 
@@ -290,6 +313,7 @@ class Search:
             "best_objective": self._objective(self.best.score),
             "parents": len(self.parents), "competition_end": self.competition_end,
             "progress_reference":self.reference_gain,
+            "goal_gap":None if self.goal_score is None else max(0.,self.best.score-self.goal_score),
             "lineages":[{"born":p.born,"objective":self._objective(p.candidate.score),
                          "trend":sum(p.progress)/max(1,len(p.progress))}
                         for p in self.parents],
@@ -305,6 +329,10 @@ class Search:
         self.parents=[Lineage(initial,0,[])]
         self._remember(initial)
         self.checkpoint_score=self.best.score
+        if self.goal_score is not None and self.best.score < self.goal_score-1e-9*max(1.,abs(self.goal_score)):
+            raise ValueError("Initial objective violates the stated objective lower bound")
+        if self.on_generation is not None:
+            self.on_generation(0,deepcopy(self.best.state),self._objective(self.best.score),1,self.evaluations)
         started_at=time.perf_counter()
         previous_best=self._objective(self.best.score)
         print(f"START generations={cfg.iterations} initial_best={previous_best:.12f} "
@@ -341,6 +369,9 @@ class Search:
                     "best_objective":self._objective(self.best.score),
                     "parents":len(self.parents),
                     "progress_reference":self.reference_gain})
+                if self.on_generation is not None:
+                    self.on_generation(step,deepcopy(self.best.state),
+                        self._objective(self.best.score),len(self.parents),self.evaluations)
                 if step%cfg.checkpoint_every==0:
                     self._status()
                 if step==1 or step%cfg.log_every==0:
