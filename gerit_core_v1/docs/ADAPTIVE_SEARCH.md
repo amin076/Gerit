@@ -1,3 +1,39 @@
+## Default one-lineage adaptive search; domain display (2026-10-28)
+
+Gerit now defaults to `initial_parents=1` and `max_parents=10`.
+A lineage is one active search path with its own current parent, progress
+history, and step-size preferences. The population adjustment controller
+checks every `population_adjust_interval=20` completed generations:
+it can add at most ONE lineage after weak progress, or remove at most
+ONE lineage after strong progress, down to a minimum of ONE. The
+population does not necessarily hit either limit or return to one
+within any given run.
+
+The generic engine's progress output optionally calls a problem adapter's
+`progress_display(state)` method. The square adapter supplies
+`best_L=<container side>` as the leading field, since this is the
+user's primary practical metric. Generic objective scores remain
+preserved as independent fields and in best.json. No square geometry
+is imported into the general-purpose engine.
+
+CLI default `log_every=10` displays STEP 1 and every tenth completed
+generation. Checkpoints default separately to 200; specify 10 if desired.
+
+### Windows CMD: 1000 new generations from previous 500-generation best
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-warm-step-500-4515/best.json --iterations 1000 --initial-parents 1 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 120000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4516 --output-dir results/squares-singlelineage-1000-4516
+
+Warm-start loading validates the previous 12-square geometry.
+Expected starting side is approximately `4.052295013770`; it is the
+state only, not a deterministic resume of old RNG or adaptive history.
+A fresh output directory preserves earlier best.json files.
+
 ## Inheritable generic intensity and warm-start experiment (2026-10-28)
 
 This is a DOMAIN-INDEPENDENT core change. A lineage now stores a private
