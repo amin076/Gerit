@@ -108,6 +108,53 @@ class StepLearningTests(unittest.TestCase):
             self.assertGreater(search.weights["good"],search.weights["idle"])
             self.assertGreater(search.weights["idle"],0.)
 
+    def test_recent_vs_lifetime_operator_preference(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(output_dir=directory,recent_learning_window=4,
+                         recent_learning_mix=0.5)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            m=search.operator_memory["step"]
+            m["attempts"]=100
+            m["successes"]=20
+            m["utility_sum"]=12.
+            m["recent_utilities"]=[0.,0.,0.,0.]
+            cold=search._operator_preference("step")
+            m["recent_utilities"]=[1.,1.,1.,1.]
+            hot=search._operator_preference("step")
+            self.assertGreater(hot,cold)
+            self.assertGreater(cold,0.)
+
+    def test_cost_and_magnitude_reward(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            search=Search(OneDimensional(),{
+                "good":lambda state,rng,intensity:(state[0]-.5,),
+                "idle":lambda state,rng,intensity:state},
+                Settings(output_dir=directory,recent_learning_window=5))
+            parent=Candidate((3.,),9.)
+            # Force the chooser to select the improving operator.
+            search.operators={"good":search.operators["good"]}
+            for _ in range(3):
+                child=search._mutate(parent)
+                self.assertLess(child.score,parent.score)
+            memory=search.operator_memory["good"]
+            self.assertEqual(memory["successes"],3)
+            self.assertGreater(memory["utility_sum"],0.)
+            self.assertLess(memory["utility_sum"],3.)
+            self.assertEqual(len(memory["recent_utilities"]),3)
+
+    def test_delayed_credit_only_to_origin(self):
+        with TemporaryDirectory() as directory:
+            search=Search(OneDimensional(),{
+                "origin":step,"other":step},Settings(output_dir=directory))
+            original=search.weights["origin"]
+            other=search.weights["other"]
+            search._credit_operator("origin",0.5)
+            self.assertGreater(search.weights["origin"],original)
+            self.assertEqual(search.weights["other"],other)
+            self.assertGreater(search.operator_memory["origin"]["delayed_credit"],0.)
+            self.assertEqual(search.operator_memory["origin"]["attempts"],0)
+
     def test_warm_started_square_remains_valid(self):
         problem=TwelveSquares()
         state=problem.initial(random.Random(4514))
