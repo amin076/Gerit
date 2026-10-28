@@ -38,6 +38,10 @@ class Settings:
     jump_scale: float = 7.0
     lineage_step_learning_rate: float = 0.12
     stagnation_jump_threshold: int = 20
+    diversity_fraction: float = 0.10  # fraction of observed candidate spread
+    explorer_generations: int = 15
+    max_explorers: int = 2
+    explorer_uphill_probability: float = 0.20
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
@@ -72,6 +76,12 @@ class Settings:
             raise ValueError("Invalid jump_scale")
         if not 0 < self.lineage_step_learning_rate <= 1:
             raise ValueError("Invalid lineage_step_learning_rate")
+        if not 0 <= self.diversity_fraction <= 1:
+            raise ValueError("diversity_fraction must be in [0,1]")
+        if self.explorer_generations < 1 or self.max_explorers < 0:
+            raise ValueError("Invalid explorer horizon or capacity")
+        if not 0 <= self.explorer_uphill_probability <= 1:
+            raise ValueError("Invalid explorer_uphill_probability")
         if self.stagnation_jump_threshold < 1:
             raise ValueError("stagnation_jump_threshold must be positive")
         for key in ("significant_gain", "goal_progress_floor", "min_distance", "absolute_regression"):
@@ -95,6 +105,9 @@ class Lineage:
     stagnation: int = 0
     progress_velocity: float = 0.0
     progress_acceleration: float = 0.0
+    explorer_until: int = 0
+    explorer_baseline: float = 0.0
+    explorer_birth_score: float = 0.0
 
 
 @dataclass
@@ -127,6 +140,9 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
+        self.explorer_stats = {"spawned":0,"expired":0,"improved_baseline":0,
+                               "uphill_steps":0,"rejected_duplicate":0,
+                               "rejected_capacity":0}
         self.step_stats = {label:{"calls":0,"improved":0,"accepted":0}
                            for label in ("small","medium","large","jump")}
         self.operator_stats = {name: {"calls":0,"seconds":0.0,"valid":0,"improved":0}
@@ -257,6 +273,60 @@ class Search:
         rate=self.cfg.lineage_step_learning_rate
         lineage.step_weights[index]=max(0.05,(1-rate)*lineage.step_weights[index]+rate*(0.05+reward))
 
+    def _distance(self,a,b):
+        value=float(self.problem.distance(a.state,b.state))
+        if not math.isfinite(value) or value<0:
+            raise ValueError("problem.distance must be finite and nonnegative")
+        return value
+
+    def _diversity_threshold(self):
+        """Scale a threshold using observed variation, never geometry units."""
+        if self.best is None or not self.pool:
+            return self.cfg.min_distance
+        distances=sorted(self._distance(self.best,c) for c in self.pool)
+        # Median prevents one extreme/outlier from setting the scale.
+        median=distances[len(distances)//2]
+        return max(self.cfg.min_distance,self.cfg.diversity_fraction*median)
+
+    def _population_diversity(self):
+        distances=[self._distance(a.candidate,b.candidate)
+                   for i,a in enumerate(self.parents) for b in self.parents[i+1:]]
+        if not distances:
+            return {"minimum":None,"mean":None,"maximum":None,
+                    "threshold":self._diversity_threshold(),"pairs":0}
+        return {"minimum":min(distances),"mean":sum(distances)/len(distances),
+                "maximum":max(distances),"threshold":self._diversity_threshold(),
+                "pairs":len(distances)}
+
+    def _explorer_active(self,lineage):
+        return lineage.explorer_until>self.generation
+
+    def _spawn_explorer(self,candidate,ancestor):
+        """Give a distinct, temporarily worse jump an independent multi-gen path."""
+        cfg=self.cfg
+        active=sum(self._explorer_active(p) for p in self.parents)
+        if len(self.parents)>=cfg.max_parents or active>=cfg.max_explorers:
+            self.explorer_stats["rejected_capacity"]+=1
+            return False
+        threshold=self._diversity_threshold()
+        if any(self._distance(candidate,p.candidate)<threshold for p in self.parents):
+            self.explorer_stats["rejected_duplicate"]+=1
+            return False
+        if candidate.score>self.best.score+cfg.absolute_regression:
+            return False
+        self.parents.append(Lineage(deepcopy(candidate),self.generation,[],
+             step_weights=list(ancestor.step_weights or [1.,1.,1.]),
+             explorer_until=self.generation+cfg.explorer_generations,
+             explorer_baseline=ancestor.candidate.score,
+             explorer_birth_score=candidate.score))
+        self.explorer_stats["spawned"]+=1
+        self.events.append({"generation":self.generation,"event":"explorer_spawn",
+            "parents":len(self.parents),"horizon":cfg.explorer_generations,
+            "regression":candidate.score-ancestor.candidate.score,
+            "minimum_distance":min(self._distance(candidate,p.candidate)
+                                  for p in self.parents[:-1])})
+        return True
+
     def _remember_history(self):
         """Store earlier parent states for explicit backtracking after a stall."""
         for lineage in self.parents:
@@ -275,17 +345,23 @@ class Search:
         if len(self.parents) >= cfg.max_parents:
             return False
         incumbent = min((x.candidate for x in self.parents), key=lambda c: c.score)
+        threshold=self._diversity_threshold()
         def eligible(candidate):
             return (candidate.score <= self.best.score + cfg.absolute_regression
-                and all(self.problem.distance(candidate.state, p.candidate.state) >= cfg.min_distance
+                and all(self._distance(candidate,p.candidate) >= threshold
                         for p in self.parents))
         source = None
         chosen = None
         # Try actual preceding generations (1, 2, 3, ...), not just current offspring.
-        for gen, candidate in reversed(self.snapshots):
-            if gen < self.generation and eligible(candidate):
-                chosen,source = candidate, "history"
-                break
+        # Prefer a genuinely different historical path over the newest
+        # almost-identical past parent.
+        history=[(gen,c) for gen,c in self.snapshots
+                 if gen < self.generation and eligible(c)]
+        if history:
+            gen,chosen=max(history,key=lambda item:(
+                min(self._distance(item[1],p.candidate) for p in self.parents),
+                -item[1].score,item[0]))
+            source="history"
         if chosen is None:
             options = [c for c in self.pool if eligible(c)]
             if options:
@@ -331,7 +407,11 @@ class Search:
             quality = (scores[i]-smin)/max(1e-15,smax-smin)
             trend = (momentum[i]-mmin)/max(1e-15,mmax-mmin)
             priority = (1-cfg.trend_weight)*quality - cfg.trend_weight*trend
+            if self._explorer_active(p):
+                continue  # retain protected exploratory paths until their trial ends
             ranked.append((priority,i))
+        if not ranked:
+            return False
         _,drop=max(ranked)
         removed=self.parents.pop(drop)
         self.events.append({"generation":self.generation,"event":"population_contract",
@@ -406,11 +486,15 @@ class Search:
                          "step_weights":p.step_weights,
                          "progress_velocity":p.progress_velocity,
                          "progress_acceleration":p.progress_acceleration,
-                         "stagnation":p.stagnation}
+                         "stagnation":p.stagnation,
+                         "explorer_until":p.explorer_until,
+                         "explorer_baseline":p.explorer_baseline}
                         for p in self.parents],
             "operator_weights": self.weights,
             "operator_stats":self.operator_stats,
             "step_stats":self.step_stats,
+            "explorer_stats":self.explorer_stats,
+            "population_diversity":self._population_diversity(),
             "last_event": self.events[-1] if self.events else None,
         })
 
@@ -448,9 +532,11 @@ class Search:
                 previous_best=self._objective(self.best.score)
                 self._remember_history()
                 next_parents=[]
+                explorer_proposals=[]
                 for lineage in self.parents:
                     parent=lineage.candidate
                     improvements=[]
+                    alternate=[]
                     for _ in range(cfg.children_per_parent):
                         if self.evaluations>=cfg.evaluation_budget:
                             break
@@ -459,6 +545,11 @@ class Search:
                         self._step_feedback(lineage,k,parent,child)
                         if child is not None and child.score<parent.score:
                             improvements.append(child)
+                        elif (child is not None and self._explorer_active(lineage)
+                              and child.score<=min(lineage.explorer_baseline,
+                                                   self.best.score+cfg.absolute_regression)
+                              and self._distance(child,parent)>=cfg.min_distance):
+                            alternate.append(child)
                     # A continuous, explicit chance to test a much longer jump,
                     # even after local progress has stopped. Archive the best
                     # objective independently of the chosen lineage.
@@ -478,9 +569,13 @@ class Search:
                             # Limited non-improving lineage exploration, never
                             # overwrites the global best. This branch may move
                             # into a different basin on the next generation.
-                            self.snapshots.append((step,deepcopy(trial)))
+                            explorer_proposals.append((trial,lineage))
                             self.step_stats["jump"]["accepted"]+=1
                     child=min(improvements,key=lambda c:c.score) if improvements else parent
+                    if (child is parent and alternate and self._explorer_active(lineage)
+                            and self.rng.random()<cfg.explorer_uphill_probability):
+                        child=self.rng.choice(alternate)
+                        self.explorer_stats["uphill_steps"]+=1
                     gain=max(0.,parent.score-child.score)
                     # First difference of progress and its discrete acceleration.
                     prev_gain=lineage.progress[-1] if lineage.progress else 0.
@@ -492,8 +587,23 @@ class Search:
                     if len(lineage.progress)>cfg.competition_generations:
                         del lineage.progress[:-cfg.competition_generations]
                     lineage.candidate=child
+                    if lineage.explorer_until and step>=lineage.explorer_until:
+                        self.explorer_stats["expired"]+=1
+                        successful=(child.score<lineage.explorer_baseline)
+                        if successful:
+                            self.explorer_stats["improved_baseline"]+=1
+                        self.events.append({"generation":step,"event":"explorer_complete",
+                            "success":successful,"birth_score":lineage.explorer_birth_score,
+                            "final_score":child.score,"baseline":lineage.explorer_baseline})
+                        lineage.explorer_until=0
                     next_parents.append(lineage)
                 self.parents=next_parents
+                # Spawn explorers outside the iteration to avoid mutating parents
+                # while iterating. Do not allow more than one spawn per generation.
+                for proposal,ancestor in sorted(explorer_proposals,
+                                                 key=lambda pair:pair[0].score):
+                    if self._spawn_explorer(proposal,ancestor):
+                        break
                 self._adjust_population()
                 self.history.append({"generation":step,"evaluations":self.evaluations,
                     "best_objective":self._objective(self.best.score),
@@ -528,6 +638,8 @@ class Search:
                     "best_objective":self._objective(self.best.score),
                     "population":len(self.parents),"events":self.events,
                     "operator_stats":self.operator_stats,
-                    "step_stats":self.step_stats})
+                    "step_stats":self.step_stats,
+                    "explorer_stats":self.explorer_stats,
+                    "population_diversity":self._population_diversity()})
         return Result(deepcopy(self.best.state),self._objective(self.best.score),
                       self.evaluations,self.generation,self.history,self.events)
