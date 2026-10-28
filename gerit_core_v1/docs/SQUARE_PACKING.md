@@ -1,3 +1,42 @@
+## Default initialization changed: random rotated 6x6 (October 2026)
+
+This change belongs ONLY to `examples.square_packing.TwelveSquares`; the
+generic search engine and other example problems are unchanged.
+
+Default: `--initial-side 6.0 --initial-mode random --initial-angle-mode random`.
+Twelve unit squares are placed sequentially with random centers and
+independent uniformly sampled angles in [0, pi/2). Each partial packing is
+checked with the existing strict SAT overlap/boundary validator, and a
+failed construction is restarted. Defaults are 2000 placement trials per
+square and 200 restarts; a failed start reports an explicit error instead
+of injecting a grid packing. The initial square has area 36; this is
+a starting region, NOT a permanent cap on search and NOT a core-engine
+constraint. The domain's objective remains unused area = L^2 - 12.
+The existing mutation operators continue to modify angles and centers.
+
+`--initial-mode grid --initial-side 5.0` retains the former 4x3
+unrotated baseline only for comparison. The random initializer is
+deterministic for a fixed seed. An optional `--initial-angle-mode zero`
+can disable random angles for controlled comparison, not by default.
+
+### Windows CMD: pull and run 1000 generations with a fresh seed
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --iterations 1000 --children-per-parent 10 --max-parents 5 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 100000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --initial-side 6.0 --initial-mode random --initial-angle-mode random --initial-placement-attempts 2000 --initial-restarts 200 --log-every 1 --checkpoint-every 20 --seed 4513 --output-dir results/squares-random6-seed4513
+
+The first `INITIAL_CONFIGURATION` and `START` console lines confirm
+the new settings; initial objective will be 24 for L=6 because 36-12=24.
+The initial best geometry is archived in best.json; latest_packing.png
+is created immediately after initialization. This is a fresh run,
+not a continuation of the previous L~4 solution. More challenging
+random initial layouts can converge more slowly or fail; a single
+seed cannot establish superiority.
+
 ## Legacy-vs-generic integration audit (new)
 
 Separating search from the square problem was appropriate, but the initial
