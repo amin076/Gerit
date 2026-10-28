@@ -14,6 +14,7 @@ class Settings:
     iterations: int = 10000
     children_per_parent: int = 10
     max_parents: int = 5
+    initial_parents: int = 1
     stagnation_window: int = 200
     significant_gain: float = 1e-6  # fallback only when no goal/lower-bound is provided
     goal_progress_floor: float = 1e-12
@@ -50,6 +51,8 @@ class Settings:
                     "population_adjust_interval", "history_depth"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be positive")
+        if self.initial_parents>self.max_parents:
+            raise ValueError("initial_parents cannot exceed max_parents")
         if not operators:
             raise ValueError("At least one operator required")
         if not 0 <= self.exploration_floor <= 1 or not 0 < self.learning_rate <= 1:
@@ -412,11 +415,18 @@ class Search:
             raise ValueError("Initial state must be feasible and have finite objective")
         self.parents=[Lineage(initial,0,[],step_weights=[1.,1.,1.])]
         self._remember(initial)
+        # Optional initial exploratory population: newly seeded lineages
+        # inherit independent policy copies, while best-ever remains protected.
+        if cfg.initial_parents>1:
+            for _ in range(cfg.initial_parents-1):
+                if self.evaluations>=cfg.evaluation_budget:
+                    break
+                self._add_branch()
         self.checkpoint_score=self.best.score
         if self.goal_score is not None and self.best.score < self.goal_score-1e-9*max(1.,abs(self.goal_score)):
             raise ValueError("Initial objective violates the stated objective lower bound")
         if self.on_generation is not None:
-            self.on_generation(0,deepcopy(self.best.state),self._objective(self.best.score),1,self.evaluations)
+            self.on_generation(0,deepcopy(self.best.state),self._objective(self.best.score),len(self.parents),self.evaluations)
         started_at=time.perf_counter()
         previous_best=self._objective(self.best.score)
         print(f"START generations={cfg.iterations} initial_best={previous_best:.12f} "
