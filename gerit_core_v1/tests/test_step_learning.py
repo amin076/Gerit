@@ -157,6 +157,46 @@ class StepLearningTests(unittest.TestCase):
             self.assertGreater(search.operator_memory["origin"]["delayed_credit"],0.)
             self.assertEqual(search.operator_memory["origin"]["attempts"],0)
 
+    def test_global_best_provenance_and_late_branch_credit(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=3,max_parents=2,children_per_parent=1,
+                         jump_probability=0,output_dir=directory,
+                         checkpoint_every=1,log_every=10)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.run()
+            self.assertGreater(len(search.best_records),1)
+            record=search.best_records[-1]
+            self.assertEqual(record["operator"],"step")
+            self.assertEqual(record["type"],"regular")
+            self.assertEqual(record["lineage_id"],1)
+            best=json.loads((Path(directory)/"best.json").read_text())
+            self.assertEqual(best["origin"]["operator"],"step")
+            summary=json.loads((Path(directory)/"run_summary.json").read_text())
+            self.assertIn("best_records",summary)
+            self.assertIn("best_origin",summary)
+            origin=search.parents[0]
+            origin.explorer_origin_operator="step"
+            origin.explorer_credit_baseline=origin.candidate.score+0.02
+            origin.explorer_until=0
+            origin.explorer_credited=False
+            search.generation+=1
+            # Simulate post-expiry lineage continuing and improving.
+            new=Candidate((origin.candidate.state[0]-.01,),
+                          origin.candidate.score-.02)
+            amount=(origin.explorer_credit_baseline-new.score)/max(
+                1.,abs(origin.explorer_credit_baseline))
+            before=search.operator_memory["step"]["delayed_credit"]
+            search._credit_operator(origin.explorer_origin_operator,
+                                    min(1.,cfg.utility_gain_scale*amount))
+            origin.explorer_credited=True
+            self.assertGreater(search.operator_memory["step"]["delayed_credit"],before)
+            # Once credited, no second credit is due for later successes.
+            old=search.operator_memory["step"]["delayed_credit"]
+            if not origin.explorer_credited:
+                search._credit_operator("step",1.)
+            self.assertEqual(old,search.operator_memory["step"]["delayed_credit"])
+
     def test_warm_started_square_remains_valid(self):
         problem=TwelveSquares()
         state=problem.initial(random.Random(4514))
