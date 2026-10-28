@@ -23,6 +23,7 @@ from gerit.local_compression import CompressionSettings, compress_valid
 from gerit.adaptive_v4 import propose_micro, propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
 from gerit_core import Search, Settings
+from examples.packing_visualization import PackingRecorder
 
 
 class TwelveSquares:
@@ -34,6 +35,8 @@ class TwelveSquares:
             raise ValueError("Fresh 4-by-3 separated start needs initial_side >= 4")
         self.count = count
         self.initial_side = initial_side
+
+    objective_lower_bound = 0.0  # unused area cannot be negative (certified lower bound)
 
     def initial(self, rng):
         # A genuine valid 5-by-5 starting envelope when initial_side=5:
@@ -48,8 +51,8 @@ class TwelveSquares:
         return packing
 
     def evaluate(self, state):
-        # Side and side^2 have identical minimizers for positive sides.
-        return state.container_side
+        # Empty area is exactly L^2 - 12. Same minimizer as L and L^2.
+        return state.container_side**2 - 12.0
 
     def feasible(self, state):
         return (isinstance(state,Packing) and len(state.squares)==self.count
@@ -120,6 +123,10 @@ def main():
     parser.add_argument("--initial-side",type=float,default=5.)
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
+    parser.add_argument("--video",action="store_true",help="Save every generation as PNG frames and encode MP4")
+    parser.add_argument("--fps",type=int,default=30)
+    parser.add_argument("--image-width",type=int,default=900)
+    parser.add_argument("--frame-every",type=int,default=1,help="Capture one frame every N generations")
     args=parser.parse_args()
     if args.maximize:
         parser.error("square packing minimizes container side: do not use --maximize")
@@ -127,12 +134,18 @@ def main():
     problem=TwelveSquares(initial_side=args.initial_side)
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts)
+    recorder=PackingRecorder(cfg.output_dir,args.initial_side,
+                             video=args.video,fps=args.fps,
+                             width=args.image_width,frame_every=args.frame_every)
     result=Search(problem,{'micro':ops.micro,'contact':ops.contact,
-                           'restructure':ops.restructure,'compress':ops.compress},cfg).run()
+                           'restructure':ops.restructure,'compress':ops.compress},
+                  cfg,on_generation=recorder).run()
+    recorder.finish()
+    side=result.best_state.container_side
     print('DONE generations={} evaluations={} L={:.12f} area={:.12f} '
-          'valid={} state={}'.format(
-          result.generations,result.evaluations,result.best_objective,
-          result.best_objective**2,problem.feasible(result.best_state),
+          'unused_area={:.12f} valid={} state={}'.format(
+          result.generations,result.evaluations,side,side**2,
+          result.best_objective,problem.feasible(result.best_state),
           (Path(cfg.output_dir)/"best.json").resolve()),flush=True)
 
 
