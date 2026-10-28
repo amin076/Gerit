@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import fields
 import math
+import random
 from pathlib import Path
 import sys
 
@@ -30,27 +31,69 @@ from examples.packing_rotation import rotate_probe, rotation_statistics
 
 class TwelveSquares:
     """Adapter: constraints and objective belong to THIS problem, not Gerit."""
-    def __init__(self, count=12, initial_side=5.0):
+    def __init__(self, count=12, initial_side=6.0, initial_mode="random",
+                 random_angles=True, placement_attempts=2000, restart_attempts=200):
         if count != 12:
             raise ValueError("This example supports exactly twelve unit squares")
-        if initial_side < 4.0:
-            raise ValueError("Fresh 4-by-3 separated start needs initial_side >= 4")
-        self.count = count
-        self.initial_side = initial_side
+        if initial_side <= 0 or not math.isfinite(initial_side):
+            raise ValueError("initial_side must be positive and finite")
+        if initial_mode not in ("random", "grid"):
+            raise ValueError("initial_mode must be random or grid")
+        if placement_attempts < 1 or restart_attempts < 1:
+            raise ValueError("initial placement attempts and restarts must be positive")
+        if initial_mode == "grid" and initial_side < 4.0:
+            raise ValueError("grid initialization needs initial_side >= 4")
+        self.count=count
+        self.initial_side=float(initial_side)
+        self.initial_mode=initial_mode
+        self.random_angles=bool(random_angles)
+        self.placement_attempts=placement_attempts
+        self.restart_attempts=restart_attempts
 
     objective_lower_bound = 0.0  # unused area cannot be negative (certified lower bound)
 
     def initial(self, rng):
-        # A genuine valid 5-by-5 starting envelope when initial_side=5:
-        # 4 columns, 3 rows; gaps keep the squares strictly non-overlapping.
+        """Start from feasible random positions and orientations, NOT a grid.
+
+        Sequential rejection sampling validates each partial placement under
+        the same strict collision and boundary rules used throughout search.
+        No earlier solution is loaded and no special geometry is injected.
+        """
+        rng = rng if rng is not None else random.Random()
         side=self.initial_side
-        x_step=(side-1.)/3
-        y_step=(side-1.)/2
-        squares=tuple(Square(.5+i*x_step,.5+j*y_step,0.)
-                      for j in range(3) for i in range(4))
-        packing=Packing(squares,side)
-        assert validate_packing(packing,tolerance=0.).valid
-        return packing
+        if self.initial_mode == "grid":
+            x_step=(side-1.)/3
+            y_step=(side-1.)/2
+            squares=tuple(Square(.5+i*x_step,.5+j*y_step,0.)
+                          for j in range(3) for i in range(4))
+            packing=Packing(squares,side)
+            if not self.feasible(packing):
+                raise ValueError("Grid initial packing is invalid")
+            return packing
+
+        for _ in range(self.restart_attempts):
+            placed=[]
+            for _index in range(self.count):
+                for _attempt in range(self.placement_attempts):
+                    angle=rng.uniform(0.,math.pi/2) if self.random_angles else 0.
+                    half_extent=.5*(abs(math.cos(angle))+abs(math.sin(angle)))
+                    if 2*half_extent > side:
+                        continue
+                    square=Square(rng.uniform(half_extent,side-half_extent),
+                                  rng.uniform(half_extent,side-half_extent),angle)
+                    trial=Packing(tuple(placed+[square]),side)
+                    if validate_packing(trial,tolerance=0.).valid:
+                        placed.append(square)
+                        break
+                else:
+                    break
+            if len(placed)==self.count:
+                packing=Packing(tuple(placed),side)
+                if self.feasible(packing):
+                    return packing
+        raise RuntimeError(
+            f"Could not place {self.count} random squares within L={side}; "
+            "try --initial-side 6.5 or 7, or increase --initial-restarts")
 
     def evaluate(self, state):
         # Empty area is exactly L^2 - 12. Same minimizer as L and L^2.
@@ -158,7 +201,11 @@ def main():
             parser.add_argument(flag,action="store_true",default=default)
         else:
             parser.add_argument(flag,type=type(default),default=default)
-    parser.add_argument("--initial-side",type=float,default=5.)
+    parser.add_argument("--initial-side",type=float,default=6.)
+    parser.add_argument("--initial-mode",choices=("random","grid"),default="random")
+    parser.add_argument("--initial-angle-mode",choices=("random","zero"),default="random")
+    parser.add_argument("--initial-placement-attempts",type=int,default=2000)
+    parser.add_argument("--initial-restarts",type=int,default=200)
     parser.add_argument("--operator-set",choices=("legacy-hybrid","basic"),default="legacy-hybrid")
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
@@ -171,7 +218,16 @@ def main():
     if args.maximize:
         parser.error("square packing minimizes container side: do not use --maximize")
     cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
-    problem=TwelveSquares(initial_side=args.initial_side)
+    problem=TwelveSquares(initial_side=args.initial_side,
+                          initial_mode=args.initial_mode,
+                          random_angles=(args.initial_angle_mode=="random"),
+                          placement_attempts=args.initial_placement_attempts,
+                          restart_attempts=args.initial_restarts)
+    print("INITIAL_CONFIGURATION",{
+        "mode":args.initial_mode,"side":args.initial_side,
+        "angle_mode":args.initial_angle_mode,
+        "placement_attempts":args.initial_placement_attempts,
+        "restarts":args.initial_restarts},flush=True)
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts,
                          rotation_attempts=args.rotation_attempts)
