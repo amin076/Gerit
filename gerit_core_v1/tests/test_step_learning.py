@@ -71,6 +71,43 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(search.parents[0].candidate, worse)
             self.assertEqual(search.parents[0].explorer_until,14)
 
+    def test_rare_success_survives_stagnation(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=1,output_dir=directory)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            parent=Candidate((2.0,),4.0)
+            lineage=search._new_lineage(parent,0)
+            # Successful small step followed by thousands of failures.
+            search._step_feedback(lineage,0,parent,Candidate((1.9,),3.61))
+            for _ in range(1000):
+                search._step_feedback(lineage,0,parent,None)
+            for _ in range(1001):
+                search._step_feedback(lineage,1,parent,None)
+            self.assertEqual(lineage.step_successes,[1,0,0])
+            self.assertEqual(lineage.step_attempts,[1001,1001,0])
+            self.assertGreater(lineage.step_weights[0],lineage.step_weights[1])
+            # An inheriting branch owns an independent copy of the evidence.
+            child=search._new_lineage(parent,1,lineage)
+            self.assertEqual(child.step_attempts,lineage.step_attempts)
+            self.assertEqual(child.step_successes,lineage.step_successes)
+            search._step_feedback(child,1,parent,Candidate((1.9,),3.61))
+            self.assertEqual(lineage.step_successes[1],0)
+            self.assertEqual(child.step_successes[1],1)
+
+    def test_operator_posterior_does_not_collapse_to_equal_floor(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=1,output_dir=directory)
+            search=Search(OneDimensional(),{"good":step,
+                          "idle":lambda state,rng,intensity:state},cfg)
+            search.operator_memory["good"]={"attempts":1000,"successes":10}
+            search.operator_memory["idle"]={"attempts":1000,"successes":0}
+            for name,memory in search.operator_memory.items():
+                search.weights[name]=search._success_rate(
+                    memory["attempts"],memory["successes"])
+            self.assertGreater(search.weights["good"],search.weights["idle"])
+            self.assertGreater(search.weights["idle"],0.)
+
     def test_warm_started_square_remains_valid(self):
         problem=TwelveSquares()
         state=problem.initial(random.Random(4514))
