@@ -1,3 +1,54 @@
+## Genuine branch diversity and multi-generation escape trials (2026-10-29)
+
+The core now computes per-generation pairwise distances among **active**
+lineages using only the problem's supplied `distance(a,b)` method.
+`population_diversity` reports minimum, mean, maximum, pairs, and
+the effective threshold, in the *problem-defined distance units*.
+The scale is adaptive: `max(min_distance, diversity_fraction *
+median(distance(best, stored_candidate)))` with a default fraction
+of 0.10. This avoids hardcoding geometry-specific units; distance
+semantics remain the responsibility of each problem adapter.
+
+Population expansion now prefers a historical candidate that is
+furthest from its nearest active lineage rather than simply the newest
+historical snapshot. All new branches must pass the current diversity
+threshold. This encourages distinct candidate states but does NOT
+mathematically prove that search basins or futures are independent.
+
+The existing jump sampler may seed a protected explorer lineage.
+Up to `max_explorers=2` exploratory paths can run concurrently
+for `explorer_generations=15` generations; they may start with a
+candidate slightly worse than the best (bounded by
+`absolute_regression`). During the trial, the explorer may accept
+non-improving local candidates (with probability
+`explorer_uphill_probability=0.20`) subject to a loss ceiling.
+Protected explorers cannot be deleted by population contraction
+while their trial is in progress. At expiry the core compares the
+explorer's final score to its original parent's score and records a
+`explorer_complete` event. The global best-ever archive remains
+protected throughout. Neither the diversity guard nor exploration
+is a guarantee of escaping every local minimum.
+
+The progress reports in `status.json` and `run_summary.json` now
+include `population_diversity` and `explorer_stats`: spawned,
+expired, improved_baseline, uphill_steps, rejected_duplicate and
+rejected_capacity. The event log includes explorer start/end events.
+
+### Windows CMD: 500-generation comparison from previous 1000-generation best
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-singlelineage-1000-4516/best.json --iterations 500 --initial-parents 1 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 60000 --explorer-generations 15 --max-explorers 2 --diversity-fraction 0.10 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4517 --output-dir results/squares-diverse-explorers-500-4517
+
+Starting square side should be about `4.050532414419`.
+The old best is only a geometric warm start, not a resumed policy/RNG
+state. This comparison should ideally be accompanied by an equal-budget
+baseline from the same state and seed.
+
 ## Default one-lineage adaptive search; domain display (2026-10-28)
 
 Gerit now defaults to `initial_parents=1` and `max_parents=10`.
