@@ -147,6 +147,8 @@ class StepLearningTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             search=Search(OneDimensional(),{
                 "origin":step,"other":step},Settings(output_dir=directory))
+            search.weights["origin"]=search._operator_preference("origin")
+            search.weights["other"]=search._operator_preference("other")
             original=search.weights["origin"]
             other=search.weights["other"]
             search._credit_operator("origin",0.5)
