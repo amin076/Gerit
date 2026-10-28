@@ -73,9 +73,12 @@ class TwelveSquares:
 
 class PackingOperators:
     """Reuses the older Gerit geometric operators as swappable domain actions."""
-    def __init__(self, *, cap_margin=.15, compression_attempts=8):
-        if cap_margin < 0 or compression_attempts < 0:
+    def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12):
+        if cap_margin < 0 or compression_attempts < 0 or rotation_attempts < 1:
             raise ValueError("cap-margin and compression-attempts must be nonnegative")
+        self.rotation_attempts=rotation_attempts
+        self.rotation_probes=0
+        self.rotation_valid=0
         self.cap_margin=cap_margin
         self.compressor=CompressionSettings(attempts_per_child=max(1,compression_attempts))
         self.compression_attempts=compression_attempts
@@ -105,7 +108,11 @@ class PackingOperators:
         return self._finish(parent,proposed,rng)
 
     def rotate(self,parent,rng,intensity):
-        trial=rotate_probe(parent,rng,intensity,cap_margin=self.cap_margin)
+        self.rotation_probes+=1
+        trial=rotate_probe(parent,rng,intensity,cap_margin=self.cap_margin,
+                           attempts=self.rotation_attempts)
+        if trial is not parent:
+            self.rotation_valid+=1
         return self._finish(parent,trial,rng)
 
     def compress(self,parent,rng,intensity):
@@ -128,6 +135,7 @@ def main():
     parser.add_argument("--initial-side",type=float,default=5.)
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
+    parser.add_argument("--rotation-attempts",type=int,default=12)
     parser.add_argument("--video",action="store_true",help="Save every generation as PNG frames and encode MP4")
     parser.add_argument("--fps",type=int,default=30)
     parser.add_argument("--image-width",type=int,default=900)
@@ -138,7 +146,8 @@ def main():
     cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
     problem=TwelveSquares(initial_side=args.initial_side)
     ops=PackingOperators(cap_margin=args.cap_margin,
-                         compression_attempts=args.compression_attempts)
+                         compression_attempts=args.compression_attempts,
+                         rotation_attempts=args.rotation_attempts)
     recorder=PackingRecorder(cfg.output_dir,args.initial_side,
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every)
@@ -148,6 +157,8 @@ def main():
                   cfg,on_generation=recorder).run()
     recorder.finish()
     side=result.best_state.container_side
+    print("ROTATION_PROBES",{"calls":ops.rotation_probes,
+                            "valid_rotated_proposals":ops.rotation_valid},flush=True)
     print("ROTATION_STATISTICS",rotation_statistics(result.best_state),flush=True)
     print('DONE generations={} evaluations={} L={:.12f} area={:.12f} '
           'unused_area={:.12f} valid={} state={}'.format(
