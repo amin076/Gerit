@@ -32,12 +32,13 @@ class Settings:
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
+    log_every: int = 100
     output_dir: str = "results/gerit-core"
 
     def validate(self, operators):
         for key in ("iterations", "children_per_parent", "max_parents", "stagnation_window",
                     "competition_generations", "evaluation_budget", "reservoir_size",
-                    "branch_seed_attempts", "checkpoint_every",
+                    "branch_seed_attempts", "checkpoint_every", "log_every",
                     "population_adjust_interval", "history_depth"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be positive")
@@ -334,6 +335,9 @@ class Search:
                     "progress_reference":self.reference_gain})
                 if step%cfg.checkpoint_every==0:
                     self._status()
+                if step==1 or step%cfg.log_every==0:
+                    print(f"STEP {step}/{cfg.iterations} best={self._objective(self.best.score):.12g} "
+                          f"parents={len(self.parents)} evaluations={self.evaluations}/{cfg.evaluation_budget}",flush=True)
         finally:
             self._save_best()
             if self.best is not None:
