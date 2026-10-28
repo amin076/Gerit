@@ -13,7 +13,7 @@ import time
 class Settings:
     iterations: int = 10000
     children_per_parent: int = 10
-    max_parents: int = 5
+    max_parents: int = 10  # maximum active lineages; starts with one
     initial_parents: int = 1
     stagnation_window: int = 200
     significant_gain: float = 1e-6  # fallback only when no goal/lower-bound is provided
@@ -41,7 +41,7 @@ class Settings:
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
-    log_every: int = 1
+    log_every: int = 10
     output_dir: str = "results/gerit-core"
 
     def validate(self, operators):
@@ -507,7 +507,11 @@ class Search:
                 if step==1 or step%cfg.log_every==0:
                     current_best=self._objective(self.best.score)
                     improvement=(previous_best-current_best) if not cfg.maximize else (current_best-previous_best)
+                    # Optional domain-formatted display: no geometry enters the core.
+                    presenter=getattr(self.problem,"progress_display",None)
+                    domain_text=str(presenter(self.best.state)) if callable(presenter) else ""
                     print(f"STEP {step}/{cfg.iterations} "
+                          f"{domain_text + ' ' if domain_text else ''}"
                           f"best_objective={current_best:.12f} "
                           f"delta_objective={max(0.,improvement):.12f} "
                           f"parents={len(self.parents)} "
