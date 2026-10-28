@@ -1,3 +1,63 @@
+## Inheritable generic intensity and warm-start experiment (2026-10-28)
+
+This is a DOMAIN-INDEPENDENT core change. A lineage now stores a private
+distribution over three dimensionless mutation intensities (default
+`step_scales=(0.3,1.0,3.0)`). Each trial samples intensity, and its
+reward is based on objective improvement relative to its own parent.
+Probabilities are smoothed with nonzero exploration. New lineages copy
+the closest existing lineage's size preferences and continue to learn
+independently. This is **not** full policy checkpoint/resumption.
+
+Each lineage now records discrete first and second differences of
+its objective *improvement per generation*: `progress_velocity`
+and `progress_acceleration`. These are not derivatives of the objective
+with respect to the problem's coordinates. Declining and accelerating
+failure (both negative) increases the weight of longer steps; improving
+negative velocity (negative first / positive second) modestly favors
+smaller steps. Sustained stagnation favors longer steps.
+
+Independently of the learned step distribution, an occasional large
+jump (`jump_probability=0.08`, doubled after 20 stalled generations)
+tests intensity `jump_scale=7`. A global best-ever archive is preserved.
+Some nonimproving jump states may be saved as historical branch seeds
+if within `absolute_regression` of the current best. There is **no**
+proof of avoiding all local minima, nor do these rules guarantee that
+a domain operator actually honors intensity. The square adapter adds
+`scaled_pose`, which applies the intensity to changes of square center
+and orientation. Other preexisting legacy operators only partially or
+not at all use the generic intensity argument.
+
+For a five-parent warm start set `--initial-parents 5 --max-parents 10`.
+Initial parents are distinct generated alternatives near the supplied
+best state when available; a shortfall can occur if distinct feasible
+alternatives cannot be found within `branch_seed_attempts` and
+`absolute_regression`. Initializing five parents increases cost.
+Extra parents are added or removed gradually by the generic progress
+controller up to ten; it does not automatically jump to ten at once.
+
+### 500-generation Windows square adapter experiment
+
+    cd /d C:\Physics\Gerit
+    git switch experiment/single-lineage-video
+    git pull --ff-only origin experiment/single-lineage-video
+    cd gerit_core_v1
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --initial-state results/squares-random-standard-5000-4514/best.json --iterations 500 --initial-parents 5 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 60000 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 20 --checkpoint-every 20 --seed 4515 --output-dir results/squares-warm-step-500-4515
+
+The initial objective must match the loaded previous best:
+`4.421749900698131` empty area, and L about
+`4.0523758340877185`. The adapter validates all twelve poses before
+starting, displays WARM_START and saves a fresh output directory.
+This is a WARM START of the state, not a deterministic restart of the
+old search run. The budget excludes previous evaluations.
+
+New diagnostics in `status.json` and `run_summary.json` include
+`step_stats` and per-lineage `step_weights`, velocity, acceleration,
+and stagnation. This experiment is an initial test, not a proof that
+learning intensities improves the optimizer. Compare with an equally
+budgeted baseline on the *same* starting state and seed.
+
 # Gerit adaptive search — gradual branching and historical recovery
 
 Gerit is problem-independent. A problem adapter defines its objective,
