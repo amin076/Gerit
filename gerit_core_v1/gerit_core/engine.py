@@ -127,6 +127,10 @@ class Lineage:
     explorer_birth_score: float = 0.0
     explorer_origin_operator: str = ""
     explorer_origin_intensity: float = 0.0
+    lineage_id: int = 0
+    parent_lineage_id: int = 0
+    explorer_credit_baseline: float = 0.0
+    explorer_credited: bool = False
 
 
 @dataclass
@@ -159,6 +163,10 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
+        self.next_lineage_id = 1
+        self.best_origin = None
+        self.best_records = []
+        self.late_credit_events = []
         self.operator_memory = {name:{"attempts":0,"successes":0,
                                       "utility_sum":0.0,"recent_utilities":[],
                                       "delayed_credit":0.0}
@@ -200,10 +208,11 @@ class Search:
             self._atomic("best.json", {
                 "generation": self.generation, "evaluations": self.evaluations,
                 "objective": self._objective(self.best.score),
-                "state": self.problem.encode(self.best.state)
+                "state": self.problem.encode(self.best.state),
+                "origin": self.best_origin
             })
 
-    def _eval(self, state):
+    def _eval(self, state, origin=None):
         if self.evaluations >= self.cfg.evaluation_budget:
             return None
         self.evaluations += 1
@@ -214,7 +223,16 @@ class Search:
             return None
         candidate = Candidate(deepcopy(state), -value if self.cfg.maximize else value)
         if self.best is None or candidate.score < self.best.score:
+            previous=None if self.best is None else self.best.score
             self.best = deepcopy(candidate)
+            self.best_origin=dict(origin or {"type":"initial","lineage_id":None,
+                                             "operator":None,"intensity":None})
+            record={"generation":self.generation,"evaluation":self.evaluations,
+                    "objective":self._objective(candidate.score),
+                    "previous_objective":None if previous is None else self._objective(previous),
+                    **self.best_origin}
+            self.best_records.append(record)
+            self.events.append({"event":"best_record",**record})
             self._save_best()
         return candidate
 
@@ -254,8 +272,12 @@ class Search:
             attempts=list(ancestor.step_attempts or [0,0,0])
             successes=list(ancestor.step_successes or [0,0,0])
         weights=[self._success_rate(a,w) for a,w in zip(attempts,successes)]
+        identity=self.next_lineage_id
+        self.next_lineage_id+=1
         return Lineage(deepcopy(candidate),born,[],step_weights=weights,
-                       step_attempts=attempts,step_successes=successes)
+                       step_attempts=attempts,step_successes=successes,
+                       lineage_id=identity,
+                       parent_lineage_id=ancestor.lineage_id if ancestor else 0)
 
     def _operator_preference(self,name):
         """Blend long-term quality/cost evidence with a bounded recent window."""
@@ -281,7 +303,8 @@ class Search:
         del m["recent_utilities"][:-self.cfg.recent_learning_window]
         self.weights[name]=self._operator_preference(name)
 
-    def _mutate(self, parent, intensity=1.0, *, return_operator=False):
+    def _mutate(self, parent, intensity=1.0, *, return_operator=False, lineage=None,
+                move_type="regular"):
         names = list(self.operators)
         total = sum(self.weights.values())
         floor = self.cfg.exploration_floor
@@ -292,7 +315,11 @@ class Search:
         elapsed=max(0.,time.perf_counter()-t0)
         self.operator_stats[name]["seconds"] += elapsed
         self.operator_stats[name]["calls"] += 1
-        child = self._eval(state)
+        origin={"type":move_type,"lineage_id":lineage.lineage_id if lineage else None,
+                "operator":name,"intensity":intensity,
+                "parent_score":self._objective(parent.score),
+                "originating_operator":lineage.explorer_origin_operator if lineage else ""}
+        child = self._eval(state,origin=origin)
         if child is not None:
             self.operator_stats[name]["valid"] += 1
             if child.score < parent.score:
@@ -404,12 +431,15 @@ class Search:
         explorer.explorer_birth_score=candidate.score
         explorer.explorer_origin_operator=origin_operator
         explorer.explorer_origin_intensity=origin_intensity
+        explorer.explorer_credit_baseline=ancestor.candidate.score
         self.parents.append(explorer)
         self.explorer_stats["spawned"]+=1
         self.events.append({"generation":self.generation,"event":"explorer_spawn",
             "parents":len(self.parents),"horizon":cfg.explorer_generations,
             "regression":candidate.score-ancestor.candidate.score,
             "origin_operator":origin_operator,
+            "lineage_id":explorer.lineage_id,
+            "parent_lineage_id":ancestor.lineage_id,
             "minimum_distance":min(self._distance(candidate,p.candidate)
                                   for p in self.parents[:-1])})
         return True
@@ -577,9 +607,15 @@ class Search:
                          "stagnation":p.stagnation,
                          "explorer_until":p.explorer_until,
                          "explorer_baseline":p.explorer_baseline,
-                         "explorer_origin_operator":p.explorer_origin_operator}
+                         "explorer_origin_operator":p.explorer_origin_operator,
+                         "lineage_id":p.lineage_id,
+                         "parent_lineage_id":p.parent_lineage_id,
+                         "explorer_credited":p.explorer_credited}
                         for p in self.parents],
             "operator_weights": self.weights,
+            "best_origin":self.best_origin,
+            "best_record_count":len(self.best_records),
+            "late_credit_events":self.late_credit_events,
             "operator_memory": self.operator_memory,
             "operator_stats":self.operator_stats,
             "step_stats":self.step_stats,
@@ -595,6 +631,13 @@ class Search:
             raise ValueError("Initial state must be feasible and have finite objective")
         self.parents=[self._new_lineage(initial,0)]
         self._remember(initial)
+        # Resolve the initial record to the newly assigned starting lineage.
+        self.best_origin={"type":"initial","lineage_id":self.parents[0].lineage_id,
+                          "operator":None,"intensity":None}
+        if self.best_records:
+            self.best_records[0].update(self.best_origin)
+            self.events[0].update(self.best_origin)
+        self._save_best()
         # Optional initial exploratory population: newly seeded lineages
         # inherit independent policy copies, while best-ever remains protected.
         if cfg.initial_parents>1:
@@ -631,7 +674,7 @@ class Search:
                         if self.evaluations>=cfg.evaluation_budget:
                             break
                         k,intensity=self._sample_step(lineage)
-                        child=self._mutate(parent,intensity)
+                        child=self._mutate(parent,intensity,lineage=lineage)
                         self._step_feedback(lineage,k,parent,child)
                         if child is not None and child.score<parent.score:
                             improvements.append(child)
@@ -649,7 +692,8 @@ class Search:
                     if self.evaluations<cfg.evaluation_budget and self.rng.random()<jump_chance:
                         self.step_stats["jump"]["calls"]+=1
                         trial,jump_operator=self._mutate(parent,cfg.jump_scale,
-                                                         return_operator=True)
+                                                         return_operator=True,
+                                                         lineage=lineage,move_type="jump")
                         if trial is not None and trial.score<parent.score:
                             self.step_stats["jump"]["improved"]+=1
                             improvements.append(trial)
@@ -678,11 +722,31 @@ class Search:
                     if len(lineage.progress)>cfg.competition_generations:
                         del lineage.progress[:-cfg.competition_generations]
                     lineage.candidate=child
+                    # A completed exploration trial may subsequently make a new
+                    # improvement. Credit its originating move at most once,
+                    # only when the active lineage actually crosses its
+                    # original parent's baseline (not a global-best inference).
+                    if (lineage.explorer_origin_operator and lineage.explorer_until==0
+                            and not lineage.explorer_credited
+                            and child.score<lineage.explorer_credit_baseline):
+                        gain=(lineage.explorer_credit_baseline-child.score)/max(
+                            1.,abs(lineage.explorer_credit_baseline))
+                        amount=min(1.,cfg.utility_gain_scale*gain)
+                        self._credit_operator(lineage.explorer_origin_operator,amount)
+                        lineage.explorer_credited=True
+                        event={"generation":step,"event":"explorer_late_success",
+                               "lineage_id":lineage.lineage_id,
+                               "origin_operator":lineage.explorer_origin_operator,
+                               "baseline":lineage.explorer_credit_baseline,
+                               "final_score":child.score,"credit_input":amount}
+                        self.events.append(event)
+                        self.late_credit_events.append(event)
                     if lineage.explorer_until and step>=lineage.explorer_until:
                         self.explorer_stats["expired"]+=1
                         successful=(child.score<lineage.explorer_baseline)
                         if successful:
                             self.explorer_stats["improved_baseline"]+=1
+                            lineage.explorer_credited=True
                             relative_gain=(lineage.explorer_baseline-child.score)/max(
                                 1.,abs(lineage.explorer_baseline))
                             self._credit_operator(lineage.explorer_origin_operator,
@@ -690,7 +754,8 @@ class Search:
                         self.events.append({"generation":step,"event":"explorer_complete",
                             "success":successful,"birth_score":lineage.explorer_birth_score,
                             "final_score":child.score,"baseline":lineage.explorer_baseline,
-                            "origin_operator":lineage.explorer_origin_operator})
+                            "origin_operator":lineage.explorer_origin_operator,
+                            "lineage_id":lineage.lineage_id})
                         lineage.explorer_until=0
                     next_parents.append(lineage)
                 self.parents=next_parents
@@ -736,6 +801,9 @@ class Search:
                     "operator_stats":self.operator_stats,
                     "operator_memory":self.operator_memory,
                     "operator_weights":self.weights,
+                    "best_origin":self.best_origin,
+                    "best_records":self.best_records,
+                    "late_credit_events":self.late_credit_events,
                     "step_stats":self.step_stats,
                     "explorer_stats":self.explorer_stats,
                     "population_diversity":self._population_diversity()})
