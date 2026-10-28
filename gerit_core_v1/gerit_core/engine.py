@@ -44,6 +44,10 @@ class Settings:
     explorer_uphill_probability: float = 0.20
     learning_prior_trials: float = 20.0
     learning_prior_successes: float = 0.2
+    recent_learning_window: int = 120
+    recent_learning_mix: float = 0.45
+    utility_gain_scale: float = 25.0
+    delayed_credit_scale: float = 0.5
     maximize: bool = False
     seed: int = 2716
     checkpoint_every: int = 200
@@ -89,6 +93,10 @@ class Settings:
                 and self.learning_prior_trials>0
                 and 0<self.learning_prior_successes<self.learning_prior_trials):
             raise ValueError("Invalid learning prior")
+        if self.recent_learning_window < 1:
+            raise ValueError("recent_learning_window must be positive")
+        if not 0<=self.recent_learning_mix<=1 or self.utility_gain_scale<=0 or self.delayed_credit_scale<0:
+            raise ValueError("Invalid utility learning settings")
         if self.stagnation_jump_threshold < 1:
             raise ValueError("stagnation_jump_threshold must be positive")
         for key in ("significant_gain", "goal_progress_floor", "min_distance", "absolute_regression"):
@@ -117,6 +125,8 @@ class Lineage:
     explorer_until: int = 0
     explorer_baseline: float = 0.0
     explorer_birth_score: float = 0.0
+    explorer_origin_operator: str = ""
+    explorer_origin_intensity: float = 0.0
 
 
 @dataclass
@@ -149,7 +159,10 @@ class Search:
         self.operators = dict(operators)
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
-        self.operator_memory = {name:{"attempts":0,"successes":0} for name in operators}
+        self.operator_memory = {name:{"attempts":0,"successes":0,
+                                      "utility_sum":0.0,"recent_utilities":[],
+                                      "delayed_credit":0.0}
+                                for name in operators}
         self.explorer_stats = {"spawned":0,"expired":0,"improved_baseline":0,
                                "uphill_steps":0,"rejected_duplicate":0,
                                "rejected_capacity":0}
@@ -244,7 +257,31 @@ class Search:
         return Lineage(deepcopy(candidate),born,[],step_weights=weights,
                        step_attempts=attempts,step_successes=successes)
 
-    def _mutate(self, parent, intensity=1.0):
+    def _operator_preference(self,name):
+        """Blend long-term quality/cost evidence with a bounded recent window."""
+        m=self.operator_memory[name]
+        prior=self.cfg.learning_prior_trials
+        base=self.cfg.learning_prior_successes/prior
+        long=(self.cfg.learning_prior_successes+m["utility_sum"])/(prior+m["attempts"])
+        recent=m["recent_utilities"]
+        short=(self.cfg.learning_prior_successes+sum(recent))/(prior+len(recent))
+        return max(1e-12,(1-self.cfg.recent_learning_mix)*long+
+                   self.cfg.recent_learning_mix*short)
+
+    def _credit_operator(self,name,amount):
+        """Delayed credit for the *originating* jump, not every later step."""
+        if not name or name not in self.operator_memory or amount<=0:
+            return
+        m=self.operator_memory[name]
+        credit=min(self.cfg.delayed_credit_scale,amount*self.cfg.delayed_credit_scale)
+        m["utility_sum"]+=credit
+        m["delayed_credit"]+=credit
+        # Add to recent history without fabricating an extra operator call.
+        m["recent_utilities"].append(credit)
+        del m["recent_utilities"][:-self.cfg.recent_learning_window]
+        self.weights[name]=self._operator_preference(name)
+
+    def _mutate(self, parent, intensity=1.0, *, return_operator=False):
         names = list(self.operators)
         total = sum(self.weights.values())
         floor = self.cfg.exploration_floor
@@ -252,7 +289,8 @@ class Search:
         name = self.rng.choices(names, weights=probs, k=1)[0]
         t0=time.perf_counter()
         state = self.operators[name](deepcopy(parent.state), self.rng, intensity)
-        self.operator_stats[name]["seconds"] += time.perf_counter()-t0
+        elapsed=max(0.,time.perf_counter()-t0)
+        self.operator_stats[name]["seconds"] += elapsed
         self.operator_stats[name]["calls"] += 1
         child = self._eval(state)
         if child is not None:
@@ -261,12 +299,26 @@ class Search:
                 self.operator_stats[name]["improved"] += 1
         if child is not None:
             self._remember(child)
-        reward = 1.0 if child is not None and child.score < parent.score else 0.0
+        improved=(child is not None and child.score < parent.score)
         memory=self.operator_memory[name]
         memory["attempts"]+=1
-        memory["successes"]+=int(reward)
-        self.weights[name]=self._success_rate(memory["attempts"],memory["successes"])
-        return child
+        memory["successes"]+=int(improved)
+        # Relative magnitude makes the reward unitless; measured operator
+        # runtime penalizes expensive actions, using an observed global
+        # reference rather than any problem-specific conversion factor.
+        total_seconds=sum(v["seconds"] for v in self.operator_stats.values())
+        total_calls=sum(v["calls"] for v in self.operator_stats.values())
+        reference_seconds=max(1e-8,total_seconds/max(1,total_calls))
+        utility=0.0
+        if improved:
+            gain=(parent.score-child.score)/max(1.,abs(parent.score))
+            quality=min(1.,0.10+self.cfg.utility_gain_scale*gain)
+            utility=quality/(1.+elapsed/reference_seconds)
+        memory["utility_sum"]+=utility
+        memory["recent_utilities"].append(utility)
+        del memory["recent_utilities"][:-self.cfg.recent_learning_window]
+        self.weights[name]=self._operator_preference(name)
+        return (child,name) if return_operator else child
 
     def _sample_step(self,lineage):
         """A domain-free mutation intensity drawn from inheritable preferences."""
@@ -333,7 +385,7 @@ class Search:
     def _explorer_active(self,lineage):
         return lineage.explorer_until>self.generation
 
-    def _spawn_explorer(self,candidate,ancestor):
+    def _spawn_explorer(self,candidate,ancestor,origin_operator="",origin_intensity=0.):
         """Give a distinct, temporarily worse jump an independent multi-gen path."""
         cfg=self.cfg
         active=sum(self._explorer_active(p) for p in self.parents)
@@ -350,11 +402,14 @@ class Search:
         explorer.explorer_until=self.generation+cfg.explorer_generations
         explorer.explorer_baseline=ancestor.candidate.score
         explorer.explorer_birth_score=candidate.score
+        explorer.explorer_origin_operator=origin_operator
+        explorer.explorer_origin_intensity=origin_intensity
         self.parents.append(explorer)
         self.explorer_stats["spawned"]+=1
         self.events.append({"generation":self.generation,"event":"explorer_spawn",
             "parents":len(self.parents),"horizon":cfg.explorer_generations,
             "regression":candidate.score-ancestor.candidate.score,
+            "origin_operator":origin_operator,
             "minimum_distance":min(self._distance(candidate,p.candidate)
                                   for p in self.parents[:-1])})
         return True
@@ -521,7 +576,8 @@ class Search:
                          "progress_acceleration":p.progress_acceleration,
                          "stagnation":p.stagnation,
                          "explorer_until":p.explorer_until,
-                         "explorer_baseline":p.explorer_baseline}
+                         "explorer_baseline":p.explorer_baseline,
+                         "explorer_origin_operator":p.explorer_origin_operator}
                         for p in self.parents],
             "operator_weights": self.weights,
             "operator_memory": self.operator_memory,
@@ -592,7 +648,8 @@ class Search:
                         jump_chance=min(0.5,2*jump_chance)
                     if self.evaluations<cfg.evaluation_budget and self.rng.random()<jump_chance:
                         self.step_stats["jump"]["calls"]+=1
-                        trial=self._mutate(parent,cfg.jump_scale)
+                        trial,jump_operator=self._mutate(parent,cfg.jump_scale,
+                                                         return_operator=True)
                         if trial is not None and trial.score<parent.score:
                             self.step_stats["jump"]["improved"]+=1
                             improvements.append(trial)
@@ -603,7 +660,7 @@ class Search:
                             # Limited non-improving lineage exploration, never
                             # overwrites the global best. This branch may move
                             # into a different basin on the next generation.
-                            explorer_proposals.append((trial,lineage))
+                            explorer_proposals.append((trial,lineage,jump_operator))
                             self.step_stats["jump"]["accepted"]+=1
                     child=min(improvements,key=lambda c:c.score) if improvements else parent
                     if (child is parent and alternate and self._explorer_active(lineage)
@@ -626,17 +683,22 @@ class Search:
                         successful=(child.score<lineage.explorer_baseline)
                         if successful:
                             self.explorer_stats["improved_baseline"]+=1
+                            relative_gain=(lineage.explorer_baseline-child.score)/max(
+                                1.,abs(lineage.explorer_baseline))
+                            self._credit_operator(lineage.explorer_origin_operator,
+                                                   min(1.,self.cfg.utility_gain_scale*relative_gain))
                         self.events.append({"generation":step,"event":"explorer_complete",
                             "success":successful,"birth_score":lineage.explorer_birth_score,
-                            "final_score":child.score,"baseline":lineage.explorer_baseline})
+                            "final_score":child.score,"baseline":lineage.explorer_baseline,
+                            "origin_operator":lineage.explorer_origin_operator})
                         lineage.explorer_until=0
                     next_parents.append(lineage)
                 self.parents=next_parents
                 # Spawn explorers outside the iteration to avoid mutating parents
                 # while iterating. Do not allow more than one spawn per generation.
-                for proposal,ancestor in sorted(explorer_proposals,
-                                                 key=lambda pair:pair[0].score):
-                    if self._spawn_explorer(proposal,ancestor):
+                for proposal,ancestor,operator in sorted(explorer_proposals,
+                                                          key=lambda pair:pair[0].score):
+                    if self._spawn_explorer(proposal,ancestor,operator,cfg.jump_scale):
                         break
                 self._adjust_population()
                 self.history.append({"generation":step,"evaluations":self.evaluations,
