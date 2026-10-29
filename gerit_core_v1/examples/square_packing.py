@@ -47,8 +47,10 @@ class UnitSquares:
             initial_side=default_initial_side(count)
         if initial_side <= 0 or not math.isfinite(initial_side):
             raise ValueError("initial_side must be positive and finite")
-        if initial_mode not in ("random", "grid"):
-            raise ValueError("initial_mode must be random or grid")
+        if initial_mode not in ("random", "grid", "spread"):
+            raise ValueError("initial_mode must be random, grid, or spread")
+        if initial_mode == "spread" and not random_angles:
+            raise ValueError("spread initialization requires random angles")
         if placement_attempts < 1 or restart_attempts < 1:
             raise ValueError("initial placement attempts and restarts must be positive")
         if initial_mode == "grid" and initial_side < 4.0:
@@ -92,9 +94,19 @@ class UnitSquares:
 
         for _ in range(self.restart_attempts):
             placed=[]
+            # Spread initialization uses stratified random orientations.
+            # Every 6 squares sample all six 15-degree bands; positions
+            # remain independent uniform samples subject to spacing and
+            # exact collision/boundary checks. No grid positions are used.
+            angle_bands=[i % 6 for i in range(self.count)]
+            rng.shuffle(angle_bands)
             for _index in range(self.count):
                 for _attempt in range(self.placement_attempts):
-                    angle=rng.uniform(0.,math.pi/2) if self.random_angles else 0.
+                    if self.initial_mode == "spread":
+                        band=angle_bands[_index]
+                        angle=(band+rng.uniform(.15,.85))*math.pi/12
+                    else:
+                        angle=rng.uniform(0.,math.pi/2) if self.random_angles else 0.
                     half_extent=.5*(abs(math.cos(angle))+abs(math.sin(angle)))
                     if 2*half_extent > side:
                         continue
@@ -259,7 +271,8 @@ def main():
                         help="default: 2*ceil(sqrt(number_of_squares)); 8 for 12 squares")
     parser.add_argument("--initial-min-center-distance",type=float,default=2.,
                         help="minimum initial center distance in unit-square side lengths")
-    parser.add_argument("--initial-mode",choices=("random","grid"),default="random")
+    parser.add_argument("--initial-mode",choices=("random","grid","spread"),default="random",
+                        help="spread uses irregular positions and stratified random angles")
     parser.add_argument("--initial-angle-mode",choices=("random","zero"),default="random")
     parser.add_argument("--initial-placement-attempts",type=int,default=2000)
     parser.add_argument("--initial-restarts",type=int,default=200)
