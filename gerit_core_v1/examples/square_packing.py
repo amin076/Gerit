@@ -25,7 +25,7 @@ from gerit.adaptive_v4 import propose_micro, propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
 from gerit.learning import LearningController, propose_learned
 from gerit_core import Search, Settings
-from examples.packing_visualization import PackingRecorder
+from examples.packing_visualization import PackingRecorder, render_best_ancestry_video
 from examples.packing_rotation import rotate_probe, rotation_statistics
 
 
@@ -283,6 +283,8 @@ def main():
     parser.add_argument("--compression-attempts",type=int,default=8)
     parser.add_argument("--rotation-attempts",type=int,default=12)
     parser.add_argument("--video",action="store_true",help="Save every generation as PNG frames and encode MP4")
+    parser.add_argument("--lineage-video",action="store_true",
+                        help="After search, render exact best-solution ancestry as MP4")
     parser.add_argument("--fps",type=int,default=30)
     parser.add_argument("--image-width",type=int,default=900)
     parser.add_argument("--frame-every",type=int,default=1,help="Capture one frame every N generations")
@@ -328,6 +330,10 @@ def main():
     print('GEOMETRY_OPERATORS',list(operators),flush=True)
     result=Search(problem,operators,cfg,on_generation=recorder).run()
     recorder.finish()
+    if args.lineage_video:
+        render_best_ancestry_video(cfg.output_dir,problem,fps=args.fps,
+                                   width=args.image_width,
+                                   camera_side=recorder.initial_side)
     side=result.best_state.container_side
     print("LEGACY_LEARNING",{"calls":ops.learned_calls,
                              "improving_candidates":ops.learned_improved,
