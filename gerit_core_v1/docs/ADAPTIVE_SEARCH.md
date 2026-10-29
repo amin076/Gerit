@@ -1,3 +1,25 @@
+## Next problem: 13 freely rotated unit squares (2026-10-29)
+
+The packing adapter accepts `--square-count` (default 12) without
+changing the generic Gerit engine. The objective is the actual unused
+area `L*L - square_count`; the image labels and grid/random initialization
+also adapt to the requested number. Existing `TwelveSquares` imports remain
+supported. Do not warm-start the 13-square run using a 12-square file.
+
+The exact optimum for 13 unit squares is `L = 4` (Wolfram Bentz, 2010).
+This makes it a useful known-answer transfer test before attempting an
+unknown case. A 100-generation random-start smoke run, from the
+`gerit_core_v1` directory:
+
+    py -3 -m unittest discover -s tests -v
+
+    py -3 -u -m examples.square_packing --square-count 13 --iterations 100 --initial-parents 1 --max-parents 10 --children-per-parent 10 --population-adjust-interval 20 --reservoir-size 128 --evaluation-budget 200000 --initial-mode random --initial-angle-mode random --initial-min-center-distance 2.0 --initial-side 8 --compression-attempts 4 --rotation-attempts 12 --operator-set legacy-hybrid --log-every 10 --checkpoint-every 10 --seed 4526 --output-dir results/squares-13-fresh-100-4526
+
+The initial unused area at side 8 is 51 (not 52). The exact optimal
+unused area is 3 (not 0), so the engine's generic lower bound of zero
+remains valid but not tight for this problem. Results from this smoke
+run are not directly comparable to the 12-square scores.
+
 ## Traceable global-best records and late lineage credit (2026-10-29)
 
 Each branch now has a stable, monotonically allocated `lineage_id`
