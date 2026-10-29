@@ -23,6 +23,27 @@ def step(state,rng,intensity):
 
 
 class StepLearningTests(unittest.TestCase):
+    def test_configurable_square_count_preserves_twelve_and_supports_thirteen(self):
+        from examples.square_packing import UnitSquares
+        # Existing twelve-square code keeps its original public name and value.
+        self.assertEqual(TwelveSquares().count,12)
+        for count in (12,13):
+            problem=UnitSquares(count=count,initial_mode="random",
+                                initial_side=8.,min_center_distance=2.)
+            initial=problem.initial(random.Random(4525+count))
+            self.assertTrue(problem.feasible(initial))
+            self.assertEqual(len(initial.squares),count)
+            self.assertAlmostEqual(problem.evaluate(initial),64.-count)
+            restored=problem.decode(problem.encode(initial))
+            self.assertTrue(problem.feasible(restored))
+            self.assertEqual(len(restored.squares),count)
+            grid=UnitSquares(count=count,initial_mode="grid",initial_side=8.)
+            grid_state=grid.initial(random.Random(1))
+            self.assertTrue(grid.feasible(grid_state))
+            self.assertEqual(len(grid_state.squares),count)
+        with self.assertRaises(ValueError):
+            UnitSquares(count=0)
+
     def test_inherited_strategy_derivative_and_jumps(self):
         with TemporaryDirectory() as directory:
             settings=Settings(iterations=12,children_per_parent=4,
