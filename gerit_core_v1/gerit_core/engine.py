@@ -109,6 +109,8 @@ class Settings:
 class Candidate:
     state: object
     score: float
+    node_id: int = 0
+    parent_node_id: int = None
 
 
 @dataclass
@@ -164,6 +166,9 @@ class Search:
         self.rng = random.Random(self.cfg.seed)
         self.weights = {name: 1.0 for name in operators}
         self.next_lineage_id = 1
+        self.next_node_id = 1
+        self.written_node_ids = set()
+        self.genealogy_path = None
         self.best_origin = None
         self.best_records = []
         self.late_credit_events = []
@@ -203,16 +208,39 @@ class Search:
     def _objective(self, score):
         return -score if self.cfg.maximize else score
 
+    def _write_genealogy(self, candidate, kind="accepted"):
+        """Persist only selected candidates and records, with exact causal parent IDs.
+
+        Intermediate rejected mutations get IDs but no serialized geometry.
+        Their accepted descendants can only arise through an accepted parent,
+        so the chain back to the initial state remains complete.
+        """
+        if candidate.node_id in self.written_node_ids:
+            return
+        self.written_node_ids.add(candidate.node_id)
+        if self.genealogy_path is None:
+            return
+        row={"node_id":candidate.node_id,
+             "parent_node_id":candidate.parent_node_id,
+             "generation":self.generation,
+             "evaluation":self.evaluations,
+             "objective":self._objective(candidate.score),
+             "kind":kind,
+             "state":self.problem.encode(candidate.state)}
+        with self.genealogy_path.open("a",encoding="utf8") as file:
+            file.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\\n")
+
     def _save_best(self):
         if self.best is not None:
             self._atomic("best.json", {
                 "generation": self.generation, "evaluations": self.evaluations,
                 "objective": self._objective(self.best.score),
                 "state": self.problem.encode(self.best.state),
-                "origin": self.best_origin
+                "origin": self.best_origin,
+                "best_node_id": self.best.node_id
             })
 
-    def _eval(self, state, origin=None):
+    def _eval(self, state, origin=None, parent_node_id=None):
         if self.evaluations >= self.cfg.evaluation_budget:
             return None
         self.evaluations += 1
@@ -221,7 +249,9 @@ class Search:
         value = float(self.problem.evaluate(state))
         if not math.isfinite(value):
             return None
-        candidate = Candidate(deepcopy(state), -value if self.cfg.maximize else value)
+        candidate = Candidate(deepcopy(state), -value if self.cfg.maximize else value,
+                              self.next_node_id, parent_node_id)
+        self.next_node_id += 1
         if self.best is None or candidate.score < self.best.score:
             previous=None if self.best is None else self.best.score
             self.best = deepcopy(candidate)
@@ -231,8 +261,11 @@ class Search:
                     "objective":self._objective(candidate.score),
                     "previous_objective":None if previous is None else self._objective(previous),
                     **self.best_origin}
+            record["node_id"]=candidate.node_id
+            record["parent_node_id"]=candidate.parent_node_id
             self.best_records.append(record)
             self.events.append({"event":"best_record",**record})
+            self._write_genealogy(candidate,"best_record")
             self._save_best()
         return candidate
 
@@ -319,7 +352,7 @@ class Search:
                 "operator":name,"intensity":intensity,
                 "parent_score":self._objective(parent.score),
                 "originating_operator":lineage.explorer_origin_operator if lineage else ""}
-        child = self._eval(state,origin=origin)
+        child = self._eval(state,origin=origin,parent_node_id=parent.node_id)
         if child is not None:
             self.operator_stats[name]["valid"] += 1
             if child.score < parent.score:
@@ -433,6 +466,7 @@ class Search:
         explorer.explorer_origin_intensity=origin_intensity
         explorer.explorer_credit_baseline=ancestor.candidate.score
         self.parents.append(explorer)
+        self._write_genealogy(candidate,"explorer_seed")
         self.explorer_stats["spawned"]+=1
         self.events.append({"generation":self.generation,"event":"explorer_spawn",
             "parents":len(self.parents),"horizon":cfg.explorer_generations,
@@ -521,6 +555,7 @@ class Search:
         # separate from the domain-specific candidate state.
         ancestor=min(self.parents,key=lambda p:self.problem.distance(chosen.state,p.candidate.state))
         self.parents.append(self._new_lineage(chosen,self.generation,ancestor))
+        self._write_genealogy(chosen,"branch_seed")
         self.events.append({"generation":self.generation,"event":"population_expand",
             "parents":len(self.parents),"source":source,"attempts":attempts,
             "rollback_generations":self.generation-gen if source=="history" else 0})
@@ -646,6 +681,8 @@ class Search:
 
     def run(self):
         cfg=self.cfg
+        self.genealogy_path=self.output/"genealogy.jsonl"
+        self.genealogy_path.write_text("",encoding="utf8")
         initial=self._eval(self.problem.initial(self.rng))
         if initial is None:
             raise ValueError("Initial state must be feasible and have finite objective")
@@ -744,6 +781,7 @@ class Search:
                     if len(lineage.progress)>cfg.competition_generations:
                         del lineage.progress[:-cfg.competition_generations]
                     lineage.candidate=child
+                    self._write_genealogy(child,"selected_parent")
                     # A completed exploration trial may subsequently make a new
                     # improvement. Credit its originating move at most once,
                     # only when the active lineage actually crosses its
@@ -813,6 +851,8 @@ class Search:
                     "operator_memory":self.operator_memory,
                     "operator_weights":self.weights,
                     "best_origin":self.best_origin,
+                    "best_node_id":self.best.node_id,
+                    "genealogy_file":"genealogy.jsonl",
                     "best_records":self.best_records,
                     "late_credit_events":self.late_credit_events,
                     "step_stats":self.step_stats,
