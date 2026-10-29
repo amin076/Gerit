@@ -1,0 +1,283 @@
+"""Regression checks for generic inheritable step-size policies and warm-start."""
+import json
+import random
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from gerit_core import Search, Settings
+from examples.square_packing import TwelveSquares, PackingOperators
+
+
+class OneDimensional:
+    objective_lower_bound=0.0
+    def initial(self,rng): return (3.0,)
+    def feasible(self,state): return len(state)==1 and abs(state[0])<100
+    def evaluate(self,state): return state[0]**2
+    def distance(self,a,b): return abs(a[0]-b[0])
+    def encode(self,state): return list(state)
+
+
+def step(state,rng,intensity):
+    return (state[0]-min(state[0],0.04*intensity),)
+
+
+class StepLearningTests(unittest.TestCase):
+    def test_configurable_square_count_preserves_twelve_and_supports_thirteen(self):
+        from examples.square_packing import UnitSquares
+        # Existing twelve-square code keeps its original public name and value.
+        self.assertEqual(TwelveSquares().count,12)
+        for count in (12,13):
+            problem=UnitSquares(count=count,initial_mode="random",
+                                initial_side=8.,min_center_distance=2.)
+            initial=problem.initial(random.Random(4525+count))
+            self.assertTrue(problem.feasible(initial))
+            self.assertEqual(len(initial.squares),count)
+            self.assertAlmostEqual(problem.evaluate(initial),64.-count)
+            restored=problem.decode(problem.encode(initial))
+            self.assertTrue(problem.feasible(restored))
+            self.assertEqual(len(restored.squares),count)
+            grid=UnitSquares(count=count,initial_mode="grid",initial_side=8.)
+            grid_state=grid.initial(random.Random(1))
+            self.assertTrue(grid.feasible(grid_state))
+            self.assertEqual(len(grid_state.squares),count)
+        with self.assertRaises(ValueError):
+            UnitSquares(count=0)
+
+    def test_spread_initialization_has_irregular_positions_and_angle_diversity(self):
+        import math
+        from examples.square_packing import UnitSquares
+        for seed in (4531,4532,4533):
+            problem=UnitSquares(count=18,initial_mode="spread",
+                                initial_side=12.,min_center_distance=2.3)
+            packing=problem.initial(random.Random(seed))
+            self.assertTrue(problem.feasible(packing))
+            self.assertEqual(packing.container_side,12.)
+            self.assertEqual(len(packing.squares),18)
+            bins={int((s.angle % (math.pi/2)) * 12/math.pi)
+                  for s in packing.squares}
+            self.assertEqual(bins,set(range(6)))
+            for i,square in enumerate(packing.squares):
+                for other in packing.squares[:i]:
+                    self.assertGreaterEqual(
+                        math.hypot(square.x-other.x,square.y-other.y),
+                        2.3-1e-10)
+        with self.assertRaises(ValueError):
+            UnitSquares(count=18,initial_mode="spread",
+                        initial_side=12.,random_angles=False)
+
+    def test_inherited_strategy_derivative_and_jumps(self):
+        with TemporaryDirectory() as directory:
+            settings=Settings(iterations=12,children_per_parent=4,
+                initial_parents=2,max_parents=3,branch_seed_attempts=10,
+                evaluation_budget=200,checkpoint_every=4,log_every=20,
+                output_dir=directory,seed=88,jump_probability=1.0)
+            search=Search(OneDimensional(),{"step":step},settings)
+            result=search.run()
+            self.assertEqual(result.generations,12)
+            self.assertGreater(search.step_stats["jump"]["calls"],0)
+            self.assertGreater(sum(search.step_stats[k]["calls"]
+                         for k in ("small","medium","large")),0)
+            self.assertTrue(all(len(p.step_weights)==3 for p in search.parents))
+            self.assertTrue(all(isinstance(p.progress_velocity,float)
+                         for p in search.parents))
+            status=json.loads((Path(directory)/"status.json").read_text())
+            self.assertIn("step_stats",status)
+            self.assertIn("progress_acceleration",status["lineages"][0])
+
+    def test_final_best_has_exact_complete_parent_state_ancestry(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=16,children_per_parent=4,
+                         initial_parents=2,max_parents=3,
+                         branch_seed_attempts=10,evaluation_budget=300,
+                         checkpoint_every=4,log_every=20,
+                         output_dir=directory,seed=121)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.run()
+            output=Path(directory)
+            best=json.loads((output/"best.json").read_text())
+            summary=json.loads((output/"run_summary.json").read_text())
+            nodes={}
+            for line in (output/"genealogy.jsonl").read_text().splitlines():
+                row=json.loads(line)
+                self.assertNotIn(row["node_id"],nodes)
+                nodes[row["node_id"]]=row
+            self.assertEqual(summary["best_node_id"],best["best_node_id"])
+            current=best["best_node_id"]
+            visited=set()
+            while current is not None:
+                self.assertNotIn(current,visited)
+                visited.add(current)
+                self.assertIn(current,nodes)
+                current=nodes[current]["parent_node_id"]
+            self.assertIn(1,visited)
+            self.assertIsNone(nodes[1]["parent_node_id"])
+            self.assertEqual(nodes[best["best_node_id"]]["state"],best["state"])
+            self.assertGreater(len(visited),1)
+
+    def test_diversity_and_multigeneration_explorer(self):
+        from gerit_core.engine import Candidate, Lineage
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=3,initial_parents=1,
+                         output_dir=directory,diversity_fraction=0.0,
+                         max_explorers=1,explorer_generations=4)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            original=Candidate((1.0,),1.0)
+            search.best=original
+            search.pool=[original]
+            parent=Lineage(original,0,[],step_weights=[1.,1.,1.])
+            search.parents=[parent]
+            search.generation=10
+            duplicate=Candidate((1.0,),1.0)
+            self.assertFalse(search._spawn_explorer(duplicate,parent))
+            # The exploratory state is worse than the branch baseline but
+            # within the allowed global regression allowance.
+            worse=Candidate((1.1,),1.1)
+            self.assertTrue(search._spawn_explorer(worse,parent))
+            self.assertEqual(search.parents[-1].explorer_until,14)
+            self.assertEqual(search.parents[-1].explorer_baseline,1.0)
+            self.assertEqual(search._population_diversity()["pairs"],1)
+            self.assertAlmostEqual(search._population_diversity()["minimum"],0.1)
+            self.assertFalse(search._spawn_explorer(Candidate((1.12,),1.12),parent))
+            search._contract()
+            self.assertEqual(len(search.parents),1)
+            self.assertEqual(search.parents[0].candidate, worse)
+            self.assertEqual(search.parents[0].explorer_until,14)
+
+    def test_rare_success_survives_stagnation(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=1,output_dir=directory)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            parent=Candidate((2.0,),4.0)
+            lineage=search._new_lineage(parent,0)
+            # Successful small step followed by thousands of failures.
+            search._step_feedback(lineage,0,parent,Candidate((1.9,),3.61))
+            for _ in range(1000):
+                search._step_feedback(lineage,0,parent,None)
+            for _ in range(1001):
+                search._step_feedback(lineage,1,parent,None)
+            self.assertEqual(lineage.step_successes,[1,0,0])
+            self.assertEqual(lineage.step_attempts,[1001,1001,0])
+            self.assertGreater(lineage.step_weights[0],lineage.step_weights[1])
+            # An inheriting branch owns an independent copy of the evidence.
+            child=search._new_lineage(parent,1,lineage)
+            self.assertEqual(child.step_attempts,lineage.step_attempts)
+            self.assertEqual(child.step_successes,lineage.step_successes)
+            search._step_feedback(child,1,parent,Candidate((1.9,),3.61))
+            self.assertEqual(lineage.step_successes[1],0)
+            self.assertEqual(child.step_successes[1],1)
+
+    def test_operator_posterior_does_not_collapse_to_equal_floor(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=1,output_dir=directory)
+            search=Search(OneDimensional(),{"good":step,
+                          "idle":lambda state,rng,intensity:state},cfg)
+            search.operator_memory["good"]={"attempts":1000,"successes":10}
+            search.operator_memory["idle"]={"attempts":1000,"successes":0}
+            for name,memory in search.operator_memory.items():
+                search.weights[name]=search._success_rate(
+                    memory["attempts"],memory["successes"])
+            self.assertGreater(search.weights["good"],search.weights["idle"])
+            self.assertGreater(search.weights["idle"],0.)
+
+    def test_recent_vs_lifetime_operator_preference(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(output_dir=directory,recent_learning_window=4,
+                         recent_learning_mix=0.5)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            m=search.operator_memory["step"]
+            m["attempts"]=100
+            m["successes"]=20
+            m["utility_sum"]=12.
+            m["recent_utilities"]=[0.,0.,0.,0.]
+            cold=search._operator_preference("step")
+            m["recent_utilities"]=[1.,1.,1.,1.]
+            hot=search._operator_preference("step")
+            self.assertGreater(hot,cold)
+            self.assertGreater(cold,0.)
+
+    def test_cost_and_magnitude_reward(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            search=Search(OneDimensional(),{
+                "good":lambda state,rng,intensity:(state[0]-.5,),
+                "idle":lambda state,rng,intensity:state},
+                Settings(output_dir=directory,recent_learning_window=5))
+            parent=Candidate((3.,),9.)
+            # Force the chooser to select the improving operator.
+            search.operators={"good":search.operators["good"]}
+            for _ in range(3):
+                child=search._mutate(parent)
+                self.assertLess(child.score,parent.score)
+            memory=search.operator_memory["good"]
+            self.assertEqual(memory["successes"],3)
+            self.assertGreater(memory["utility_sum"],0.)
+            self.assertLess(memory["utility_sum"],3.)
+            self.assertEqual(len(memory["recent_utilities"]),3)
+
+    def test_delayed_credit_only_to_origin(self):
+        with TemporaryDirectory() as directory:
+            search=Search(OneDimensional(),{
+                "origin":step,"other":step},Settings(output_dir=directory))
+            search.weights["origin"]=search._operator_preference("origin")
+            search.weights["other"]=search._operator_preference("other")
+            original=search.weights["origin"]
+            other=search.weights["other"]
+            search._credit_operator("origin",0.5)
+            self.assertGreater(search.weights["origin"],original)
+            self.assertEqual(search.weights["other"],other)
+            self.assertGreater(search.operator_memory["origin"]["delayed_credit"],0.)
+            self.assertEqual(search.operator_memory["origin"]["attempts"],0)
+
+    def test_global_best_provenance_and_late_branch_credit(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=3,max_parents=2,children_per_parent=1,
+                         jump_probability=0,output_dir=directory,
+                         checkpoint_every=1,log_every=10)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.run()
+            self.assertGreater(len(search.best_records),1)
+            record=search.best_records[-1]
+            self.assertEqual(record["operator"],"step")
+            self.assertEqual(record["type"],"regular")
+            self.assertEqual(record["lineage_id"],1)
+            best=json.loads((Path(directory)/"best.json").read_text())
+            self.assertEqual(best["origin"]["operator"],"step")
+            summary=json.loads((Path(directory)/"run_summary.json").read_text())
+            self.assertIn("best_records",summary)
+            self.assertIn("best_origin",summary)
+            origin=search.parents[0]
+            origin.explorer_origin_operator="step"
+            origin.explorer_credit_baseline=origin.candidate.score+0.02
+            origin.explorer_until=0
+            origin.explorer_credited=False
+            search.generation+=1
+            # Simulate post-expiry lineage continuing and improving.
+            new=Candidate((origin.candidate.state[0]-.01,),
+                          origin.candidate.score-.02)
+            before=search.operator_memory["step"]["delayed_credit"]
+            self.assertTrue(search._credit_late_explorer(origin,new.score))
+            self.assertGreater(search.operator_memory["step"]["delayed_credit"],before)
+            self.assertFalse(search._credit_late_explorer(origin,new.score-.01))
+            self.assertEqual(len(search.late_credit_events),1)
+            self.assertEqual(search.late_credit_events[0]["lineage_id"],origin.lineage_id)
+            old=search.operator_memory["step"]["delayed_credit"]
+            self.assertEqual(old,search.operator_memory["step"]["delayed_credit"])
+
+    def test_warm_started_square_remains_valid(self):
+        problem=TwelveSquares()
+        state=problem.initial(random.Random(4514))
+        payload={"state":problem.encode(state)}
+        restored=problem.decode(payload["state"])
+        self.assertTrue(problem.feasible(restored))
+        problem.warm_start=restored
+        self.assertEqual(problem.initial(random.Random(20)),restored)
+        action=PackingOperators(compression_attempts=1)
+        trial=action.scaled_pose(restored,random.Random(33),3.)
+        self.assertTrue(problem.feasible(trial))
+
+
+if __name__=="__main__":
+    unittest.main()
