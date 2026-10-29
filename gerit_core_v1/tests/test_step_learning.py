@@ -85,6 +85,36 @@ class StepLearningTests(unittest.TestCase):
             self.assertIn("step_stats",status)
             self.assertIn("progress_acceleration",status["lineages"][0])
 
+    def test_final_best_has_exact_complete_parent_state_ancestry(self):
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=16,children_per_parent=4,
+                         initial_parents=2,max_parents=3,
+                         branch_seed_attempts=10,evaluation_budget=300,
+                         checkpoint_every=4,log_every=20,
+                         output_dir=directory,seed=121)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.run()
+            output=Path(directory)
+            best=json.loads((output/"best.json").read_text())
+            summary=json.loads((output/"run_summary.json").read_text())
+            nodes={}
+            for line in (output/"genealogy.jsonl").read_text().splitlines():
+                row=json.loads(line)
+                self.assertNotIn(row["node_id"],nodes)
+                nodes[row["node_id"]]=row
+            self.assertEqual(summary["best_node_id"],best["best_node_id"])
+            current=best["best_node_id"]
+            visited=set()
+            while current is not None:
+                self.assertNotIn(current,visited)
+                visited.add(current)
+                self.assertIn(current,nodes)
+                current=nodes[current]["parent_node_id"]
+            self.assertIsNone(nodes[next(iter(reversed(list(visited))))]["parent_node_id"]
+                              if len(visited)==1 else nodes[1]["parent_node_id"])
+            self.assertEqual(nodes[best["best_node_id"]]["state"],best["state"])
+            self.assertGreater(len(visited),1)
+
     def test_diversity_and_multigeneration_explorer(self):
         from gerit_core.engine import Candidate, Lineage
         with TemporaryDirectory() as directory:
