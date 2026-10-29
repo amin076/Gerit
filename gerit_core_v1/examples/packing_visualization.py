@@ -40,8 +40,8 @@ def render_packing(path, packing, *, generation, initial_side, parents, evaluati
         center=xy(s.x,s.y)
         draw.text((center[0]-5,center[1]-6),str(i+1),fill="#263445")
     draw.text((left,25),f"Gerit {len(packing.squares)} squares | generation {generation} | parents {parents}",fill="#172332")
-    draw.text((left,48),f"L={L:.12f}   area={L*L:.10f}   empty={L*L-len(packing.squares):.10f}",fill="#172332")
-    draw.text((left,71),f"Evaluations={evaluations}   fixed camera L={initial_side:.3f}",fill="#556476")
+    draw.text((left,48),f"L={L:.12f}",fill="#172332")
+    draw.text((left,71),f"Evaluations={evaluations}",fill="#556476")
     im.save(path)
 
 
