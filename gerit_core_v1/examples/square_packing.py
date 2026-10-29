@@ -1,4 +1,4 @@
-"""12 rigid unit squares in the smallest axis-aligned square, using generic Gerit.
+"""N rigid unit squares in the smallest axis-aligned square, using generic Gerit.
 
 Run from the repository's gerit_core_v1 directory:
   py -3 -m examples.square_packing --iterations 10000 --max-parents 10 ...
@@ -36,13 +36,13 @@ def default_initial_side(count):
     return float(2 * math.ceil(math.sqrt(count)))
 
 
-class TwelveSquares:
+class UnitSquares:
     """Adapter: constraints and objective belong to THIS problem, not Gerit."""
     def __init__(self, count=12, initial_side=None, initial_mode="random",
                  random_angles=True, placement_attempts=2000, restart_attempts=200,
                  min_center_distance=2.0):
-        if count != 12:
-            raise ValueError("This example supports exactly twelve unit squares")
+        if not isinstance(count,int) or count < 1:
+            raise ValueError("count must be a positive integer")
         if initial_side is None:
             initial_side=default_initial_side(count)
         if initial_side <= 0 or not math.isfinite(initial_side):
@@ -78,10 +78,13 @@ class TwelveSquares:
         rng = rng if rng is not None else random.Random()
         side=self.initial_side
         if self.initial_mode == "grid":
-            x_step=(side-1.)/3
-            y_step=(side-1.)/2
-            squares=tuple(Square(.5+i*x_step,.5+j*y_step,0.)
-                          for j in range(3) for i in range(4))
+            columns=math.ceil(math.sqrt(self.count))
+            rows=math.ceil(self.count/columns)
+            x_step=(side-1.)/max(1,columns-1)
+            y_step=(side-1.)/max(1,rows-1)
+            squares=tuple(Square(.5+(k%columns)*x_step,
+                                 .5+(k//columns)*y_step,0.)
+                          for k in range(self.count))
             packing=Packing(squares,side)
             if not self.feasible(packing):
                 raise ValueError("Grid initial packing is invalid")
@@ -120,8 +123,8 @@ class TwelveSquares:
         return f"best_L={state.container_side:.12f}"
 
     def evaluate(self, state):
-        # Empty area is exactly L^2 - 12. Same minimizer as L and L^2.
-        return state.container_side**2 - 12.0
+        # Empty area is exactly L^2 - count. Same minimizer as L and L^2.
+        return state.container_side**2 - self.count
 
     def feasible(self, state):
         return (isinstance(state,Packing) and len(state.squares)==self.count
@@ -238,7 +241,7 @@ class PackingOperators:
 
 
 def main():
-    parser=argparse.ArgumentParser(description="Gerit generic core + 12-square packing adapter")
+    parser=argparse.ArgumentParser(description="Gerit generic core + N-square packing adapter")
     for item in fields(Settings):
         default=item.default
         flag="--"+item.name.replace("_","-")
@@ -246,6 +249,8 @@ def main():
             parser.add_argument(flag,action="store_true",default=default)
         else:
             parser.add_argument(flag,type=type(default),default=default)
+    parser.add_argument("--square-count",type=int,default=12,
+                        help="number of unit squares (default: 12; try 13)")
     parser.add_argument("--initial-side",type=float,default=None,
                         help="default: 2*ceil(sqrt(number_of_squares)); 8 for 12 squares")
     parser.add_argument("--initial-min-center-distance",type=float,default=2.,
@@ -268,7 +273,7 @@ def main():
     if args.maximize:
         parser.error("square packing minimizes container side: do not use --maximize")
     cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
-    problem=TwelveSquares(initial_side=args.initial_side,
+    problem=UnitSquares(count=args.square_count,initial_side=args.initial_side,
                           min_center_distance=args.initial_min_center_distance,
                           initial_mode=args.initial_mode,
                           random_angles=(args.initial_angle_mode=="random"),
@@ -285,6 +290,7 @@ def main():
                             "side":state.container_side,
                             "empty_area":problem.evaluate(state)},flush=True)
     print("INITIAL_CONFIGURATION",{
+        "square_count":problem.count,
         "mode":args.initial_mode,"side":problem.initial_side,
         "reference_side":math.ceil(math.sqrt(problem.count)),
         "min_center_distance":problem.min_center_distance,
