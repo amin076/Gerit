@@ -672,7 +672,9 @@ class Search:
             self.on_generation(0,deepcopy(self.best.state),self._objective(self.best.score),len(self.parents),self.evaluations)
         started_at=time.perf_counter()
         previous_best=self._objective(self.best.score)
-        print(f"START generations={cfg.iterations} initial_best={previous_best:.12f} "
+        presenter=getattr(self.problem,"progress_display",None)
+        initial_display=str(presenter(self.best.state)) if callable(presenter) else f"initial_best={previous_best:.12f}"
+        print(f"START generations={cfg.iterations} {initial_display} "
               f"children={cfg.children_per_parent} max_parents={cfg.max_parents} "
               f"evaluation_budget={cfg.evaluation_budget}",flush=True)
         try:
@@ -787,10 +789,13 @@ class Search:
                     # Optional domain-formatted display: no geometry enters the core.
                     presenter=getattr(self.problem,"progress_display",None)
                     domain_text=str(presenter(self.best.state)) if callable(presenter) else ""
+                    # Domain adapters may supply a single user-facing metric.
+                    # Preserve generic objective logging for other problems.
+                    metric_text=(domain_text if domain_text else
+                                 f"best_objective={current_best:.12f} "
+                                 f"delta_objective={max(0.,improvement):.12f}")
                     print(f"STEP {step}/{cfg.iterations} "
-                          f"{domain_text + ' ' if domain_text else ''}"
-                          f"best_objective={current_best:.12f} "
-                          f"delta_objective={max(0.,improvement):.12f} "
+                          f"{metric_text} "
                           f"parents={len(self.parents)} "
                           f"evaluations={self.evaluations}/{cfg.evaluation_budget} "
                           f"generation_seconds={time.perf_counter()-generation_started:.1f} "
