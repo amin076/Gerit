@@ -322,10 +322,9 @@ def main():
     print("ROTATION_PROBES",{"calls":ops.rotation_probes,
                             "valid_rotated_proposals":ops.rotation_valid},flush=True)
     print("ROTATION_STATISTICS",rotation_statistics(result.best_state),flush=True)
-    print('DONE generations={} evaluations={} L={:.12f} area={:.12f} '
-          'unused_area={:.12f} valid={} state={}'.format(
-          result.generations,result.evaluations,side,side**2,
-          result.best_objective,problem.feasible(result.best_state),
+    print('DONE generations={} evaluations={} L={:.12f} valid={} state={}'.format(
+          result.generations,result.evaluations,side,
+          problem.feasible(result.best_state),
           (Path(cfg.output_dir)/"best.json").resolve()),flush=True)
 
 
