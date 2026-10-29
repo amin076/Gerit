@@ -110,8 +110,8 @@ class StepLearningTests(unittest.TestCase):
                 visited.add(current)
                 self.assertIn(current,nodes)
                 current=nodes[current]["parent_node_id"]
-            self.assertIsNone(nodes[next(iter(reversed(list(visited))))]["parent_node_id"]
-                              if len(visited)==1 else nodes[1]["parent_node_id"])
+            self.assertIn(1,visited)
+            self.assertIsNone(nodes[1]["parent_node_id"])
             self.assertEqual(nodes[best["best_node_id"]]["state"],best["state"])
             self.assertGreater(len(visited),1)
 
