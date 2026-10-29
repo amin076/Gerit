@@ -44,6 +44,28 @@ class StepLearningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             UnitSquares(count=0)
 
+    def test_spread_initialization_has_irregular_positions_and_angle_diversity(self):
+        import math
+        from examples.square_packing import UnitSquares
+        for seed in (4531,4532,4533):
+            problem=UnitSquares(count=18,initial_mode="spread",
+                                initial_side=12.,min_center_distance=2.3)
+            packing=problem.initial(random.Random(seed))
+            self.assertTrue(problem.feasible(packing))
+            self.assertEqual(packing.container_side,12.)
+            self.assertEqual(len(packing.squares),18)
+            bins={int((s.angle % (math.pi/2)) * 12/math.pi)
+                  for s in packing.squares}
+            self.assertEqual(bins,set(range(6)))
+            for i,square in enumerate(packing.squares):
+                for other in packing.squares[:i]:
+                    self.assertGreaterEqual(
+                        math.hypot(square.x-other.x,square.y-other.y),
+                        2.3-1e-10)
+        with self.assertRaises(ValueError):
+            UnitSquares(count=18,initial_mode="spread",
+                        initial_side=12.,random_angles=False)
+
     def test_inherited_strategy_derivative_and_jumps(self):
         with TemporaryDirectory() as directory:
             settings=Settings(iterations=12,children_per_parent=4,
