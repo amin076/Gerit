@@ -1,4 +1,4 @@
-"""Domain-specific visual output for the 12-square packing adapter.
+"""Domain-specific visual output for the N-square packing adapter.
 
 Rendering never participates in evaluation, mutation or parent selection.
 """
@@ -18,7 +18,7 @@ COLORS = ("#82b4dd","#85c7a1","#f1b96d","#b79cde","#dc8d9f",
 
 def render_packing(path, packing, *, generation, initial_side, parents, evaluations,
                    size=900):
-    """Draw a valid 12-square configuration at a fixed camera scale."""
+    """Draw a valid unit-square configuration at a fixed camera scale."""
     if not validate_packing(packing,tolerance=0.).valid:
         raise ValueError("Refusing to render invalid packing")
     path=Path(path)
@@ -39,8 +39,8 @@ def render_packing(path, packing, *, generation, initial_side, parents, evaluati
         draw.line(vertices+[vertices[0]],fill="#263445",width=2)
         center=xy(s.x,s.y)
         draw.text((center[0]-5,center[1]-6),str(i+1),fill="#263445")
-    draw.text((left,25),f"Gerit 12 squares | generation {generation} | parents {parents}",fill="#172332")
-    draw.text((left,48),f"L={L:.12f}   area={L*L:.10f}   empty={L*L-12:.10f}",fill="#172332")
+    draw.text((left,25),f"Gerit {len(packing.squares)} squares | generation {generation} | parents {parents}",fill="#172332")
+    draw.text((left,48),f"L={L:.12f}   area={L*L:.10f}   empty={L*L-len(packing.squares):.10f}",fill="#172332")
     draw.text((left,71),f"Evaluations={evaluations}   fixed camera L={initial_side:.3f}",fill="#556476")
     im.save(path)
 
