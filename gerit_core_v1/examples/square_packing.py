@@ -142,6 +142,10 @@ class UnitSquares:
                        float(payload['container_side']))
 
 
+# Preserve the original public adapter import for existing tests and scripts.
+TwelveSquares = UnitSquares
+
+
 class PackingOperators:
     """Reuses the older Gerit geometric operators as swappable domain actions."""
     def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12):
