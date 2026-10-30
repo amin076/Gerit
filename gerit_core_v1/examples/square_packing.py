@@ -283,6 +283,8 @@ def main():
     parser.add_argument("--compression-attempts",type=int,default=8)
     parser.add_argument("--rotation-attempts",type=int,default=12)
     parser.add_argument("--video",action="store_true",help="Save every generation as PNG frames and encode MP4")
+    parser.add_argument("--render-lineage-only",action="store_true",
+                        help="Render ancestry video from existing results without running search")
     parser.add_argument("--lineage-video",action="store_true",
                         help="After search, render exact best-solution ancestry as MP4")
     parser.add_argument("--fps",type=int,default=30)
@@ -298,6 +300,18 @@ def main():
                           random_angles=(args.initial_angle_mode=="random"),
                           placement_attempts=args.initial_placement_attempts,
                           restart_attempts=args.initial_restarts)
+    if args.render_lineage_only:
+        import json
+        final_path=Path(cfg.output_dir)/"best.json"
+        best=json.loads(final_path.read_text(encoding="utf8"))
+        final_state=problem.decode(best["state"])
+        if not problem.feasible(final_state):
+            parser.error("Existing best.json contains invalid geometry")
+        camera=max(5.0,final_state.container_side+0.3)
+        video=render_best_ancestry_video(cfg.output_dir,problem,fps=args.fps,
+                                         width=args.image_width,camera_side=camera)
+        print(f"RENDERED_FROM_EXISTING_RUN {video}",flush=True)
+        return
     if args.initial_state:
         source=Path(args.initial_state)
         payload=__import__("json").loads(source.read_text(encoding="utf8"))
