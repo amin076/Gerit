@@ -99,6 +99,36 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(search.historical_stats["expired"],1)
             self.assertEqual(search._historical_count(),0)
 
+    def test_controller_spawns_history_only_after_repeated_weak_windows(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=2,initial_parents=1,
+                         adaptive_historical=True,max_forward_branches=1,
+                         max_historical_branches=1,
+                         historical_lookback_min=100,historical_lookback_max=500,
+                         historical_stall_windows=2,historical_spawn_interval=40,
+                         output_dir=directory,diversity_fraction=0.0,
+                         population_adjust_interval=20)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            root=Candidate((1.,),1.,node_id=1)
+            older=Candidate((3.,),9.,node_id=2,parent_node_id=1)
+            search.parents=[search._new_lineage(root,0)]
+            search.best=root
+            search.checkpoint_score=1.
+            search.checkpoint_step=100
+            search.reference_gain=.1
+            search.historical_archive=[(20,older)]
+            search.generation=120
+            search._adjust_population()
+            self.assertEqual(search.historical_stats["spawned"],0)
+            search.generation=140
+            search._adjust_population()
+            self.assertEqual(search.historical_stats["spawned"],1)
+            self.assertEqual(search._forward_count(),1)
+            self.assertEqual(search._historical_count(),1)
+            self.assertEqual(search.parents[-1].candidate.node_id,2)
+            self.assertLessEqual(len(search.parents),cfg.max_parents)
+
     def test_historical_settings_are_opt_in_and_validated(self):
         with self.assertRaises(ValueError):
             Settings(adaptive_historical=True,max_parents=10,
