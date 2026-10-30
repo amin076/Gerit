@@ -727,6 +727,9 @@ class Search:
             priority = (1-cfg.trend_weight)*quality - cfg.trend_weight*trend
             if self._explorer_active(p) or (p.branch_kind=="historical" and self.generation<p.historical_protected_until):
                 continue  # protected trial cannot be discarded early
+            if (self.cfg.adaptive_historical and p.branch_kind!="historical"
+                    and self._forward_count()<=1):
+                continue  # never remove the last live forward path
             ranked.append((priority,i))
         if not ranked:
             return False
