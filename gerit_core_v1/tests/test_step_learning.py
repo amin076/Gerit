@@ -66,6 +66,49 @@ class StepLearningTests(unittest.TestCase):
             UnitSquares(count=18,initial_mode="spread",
                         initial_side=12.,random_angles=False)
 
+    def test_historical_branching_uses_old_diverse_states_and_protects_trials(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=4,initial_parents=1,
+                         adaptive_historical=True,max_forward_branches=2,
+                         max_historical_branches=2,historical_lookback_min=100,
+                         historical_lookback_max=600,historical_trial_generations=300,
+                         historical_archive_interval=20,
+                         output_dir=directory,diversity_fraction=0.0)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.generation=500
+            root=Candidate((1.0,),1.0,node_id=1)
+            search.best=root
+            search.parents=[search._new_lineage(root,0)]
+            old=Candidate((2.0,),4.0,node_id=2,parent_node_id=1)
+            search.historical_archive=[(200,old),(480,Candidate((1.1,),1.21,node_id=3))]
+            self.assertTrue(search._spawn_historical_branch())
+            historical=search.parents[-1]
+            self.assertEqual(historical.branch_kind,"historical")
+            self.assertEqual(historical.candidate.node_id,2)
+            self.assertEqual(historical.historical_protected_until,800)
+            self.assertEqual(search.historical_stats["spawned"],1)
+            self.assertEqual(search.events[-1]["rollback_generations"],300)
+            self.assertEqual(search.events[-1]["seed_node_id"],2)
+            # The old candidate's score is much worse than the normal regression band.
+            self.assertGreater(old.score,search.best.score+cfg.absolute_regression)
+            search._contract()
+            self.assertIn(historical,search.parents)
+            search.generation=800
+            search._promote_or_expire_historical()
+            self.assertEqual(search.historical_stats["expired"],1)
+            self.assertEqual(search._historical_count(),0)
+
+    def test_historical_settings_are_opt_in_and_validated(self):
+        with self.assertRaises(ValueError):
+            Settings(adaptive_historical=True,max_parents=10,
+                     max_forward_branches=6,max_historical_branches=5).validate(
+                         {"step":step})
+        with self.assertRaises(ValueError):
+            Settings(adaptive_historical=True,historical_lookback_min=500,
+                     historical_lookback_max=100).validate({"step":step})
+        self.assertFalse(Settings().adaptive_historical)
+
     def test_inherited_strategy_derivative_and_jumps(self):
         with TemporaryDirectory() as directory:
             settings=Settings(iterations=12,children_per_parent=4,
