@@ -193,6 +193,32 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(search._historical_count(),1)
             self.assertEqual(search._forward_count(),1)
 
+    def test_historical_origin_propagates_to_child_lineages(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,initial_parents=1,max_parents=4,
+                         max_forward_branches=2,max_historical_branches=2,
+                         adaptive_historical=True,
+                         historical_lookback_min=20,historical_lookback_max=400,
+                         output_dir=directory,diversity_fraction=0.0)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            seed=Candidate((1.0,),1.0,node_id=1)
+            old=Candidate((2.0,),4.0,node_id=2,parent_node_id=1)
+            search.best=seed
+            search.parents=[search._new_lineage(seed,0)]
+            search.historical_archive=[(20,old)]
+            search.generation=200
+            self.assertTrue(search._spawn_historical_branch())
+            historical=search.parents[-1]
+            self.assertEqual(historical.historical_origin_lineage_id,historical.lineage_id)
+            self.assertEqual(historical.historical_origin_generation,200)
+            self.assertEqual(historical.historical_seed_node_id,2)
+            descendant=search._new_lineage(historical.candidate,201,historical)
+            self.assertEqual(descendant.historical_origin_lineage_id,historical.lineage_id)
+            self.assertEqual(descendant.historical_origin_generation,200)
+            self.assertEqual(descendant.historical_seed_node_id,2)
+            self.assertEqual(descendant.parent_lineage_id,historical.lineage_id)
+
     def test_historical_settings_are_opt_in_and_validated(self):
         with self.assertRaises(ValueError):
             Settings(adaptive_historical=True,max_parents=10,
