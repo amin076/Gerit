@@ -193,6 +193,9 @@ class Lineage:
     historical_protected_until: int = 0
     historical_start_score: float = 0.0
     historical_birth_generation: int = 0
+    historical_origin_lineage_id: int = 0
+    historical_origin_generation: int = 0
+    historical_seed_node_id: int = 0
     historical_activated_generation: int = 0
     historical_max_until: int = 0
     historical_best_score: float = float("inf")
@@ -331,6 +334,12 @@ class Search:
             self.best = deepcopy(candidate)
             self.best_origin=dict(origin or {"type":"initial","lineage_id":None,
                                              "operator":None,"intensity":None})
+            source_id=self.best_origin.get("lineage_id")
+            source_lineage=next((p for p in self.parents if p.lineage_id==source_id),None)
+            if source_lineage is not None:
+                self.best_origin["historical_origin_lineage_id"]=source_lineage.historical_origin_lineage_id
+                self.best_origin["historical_origin_generation"]=source_lineage.historical_origin_generation
+                self.best_origin["historical_seed_node_id"]=source_lineage.historical_seed_node_id
             record={"generation":self.generation,"evaluation":self.evaluations,
                     "objective":self._objective(candidate.score),
                     "previous_objective":None if previous is None else self._objective(previous),
@@ -384,7 +393,10 @@ class Search:
         return Lineage(deepcopy(candidate),born,[],step_weights=weights,
                        step_attempts=attempts,step_successes=successes,
                        lineage_id=identity,
-                       parent_lineage_id=ancestor.lineage_id if ancestor else 0)
+                       parent_lineage_id=ancestor.lineage_id if ancestor else 0,
+                       historical_origin_lineage_id=ancestor.historical_origin_lineage_id if ancestor else 0,
+                       historical_origin_generation=ancestor.historical_origin_generation if ancestor else 0,
+                       historical_seed_node_id=ancestor.historical_seed_node_id if ancestor else 0)
 
     def _operator_preference(self,name):
         """Blend long-term quality/cost evidence with a bounded recent window."""
@@ -552,6 +564,8 @@ class Search:
             "origin_operator":origin_operator,
             "lineage_id":explorer.lineage_id,
             "parent_lineage_id":ancestor.lineage_id,
+            "historical_origin_lineage_id":explorer.historical_origin_lineage_id,
+            "historical_seed_node_id":explorer.historical_seed_node_id,
             "minimum_distance":min(self._distance(candidate,p.candidate)
                                   for p in self.parents[:-1])})
         return True
@@ -734,6 +748,9 @@ class Search:
         born,chosen,distance=max(options,key=priority)
         revived=self._new_lineage(chosen,self.generation) # independent step preferences
         revived.branch_kind="historical"
+        revived.historical_origin_lineage_id=revived.lineage_id
+        revived.historical_origin_generation=self.generation
+        revived.historical_seed_node_id=chosen.node_id
         rollback=self.generation-born
         trial=(max(cfg.historical_trial_generations,
                    math.ceil(cfg.historical_depth_budget_ratio*rollback))
@@ -757,6 +774,8 @@ class Search:
                             "lineage_id":revived.lineage_id,"seed_node_id":chosen.node_id,
                             "from_generation":born,"rollback_generations":self.generation-born,
                             "distance":distance,
+                            "historical_origin_lineage_id":revived.historical_origin_lineage_id,
+                            "historical_seed_node_id":revived.historical_seed_node_id,
                             "protected_until":revived.historical_protected_until,
                             "max_until":revived.historical_max_until,
                             "allocated_trial_generations":trial,
@@ -817,6 +836,8 @@ class Search:
         self.events.append({"generation":self.generation,"event":"population_expand",
             "lineage_id":created.lineage_id,
             "parent_lineage_id":ancestor.lineage_id,
+            "historical_origin_lineage_id":created.historical_origin_lineage_id,
+            "historical_seed_node_id":created.historical_seed_node_id,
             "seed_node_id":chosen.node_id,
             "parents":len(self.parents),"source":source,"attempts":attempts,
             "rollback_generations":self.generation-gen if source=="history" else 0})
@@ -968,6 +989,9 @@ class Search:
                          "branch_kind":p.branch_kind,
                          "historical_protected_until":p.historical_protected_until,
                          "historical_birth_generation":p.historical_birth_generation,
+                         "historical_origin_lineage_id":p.historical_origin_lineage_id,
+                         "historical_origin_generation":p.historical_origin_generation,
+                         "historical_seed_node_id":p.historical_seed_node_id,
                          "historical_best_score":self._objective(p.historical_best_score)
                            if p.branch_kind=="historical" else None,
                          "historical_max_until":p.historical_max_until}
