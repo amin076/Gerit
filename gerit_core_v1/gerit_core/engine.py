@@ -544,6 +544,7 @@ class Search:
         """Store earlier parent states for explicit backtracking after a stall."""
         for lineage in self.parents:
             self.snapshots.append((self.generation, deepcopy(lineage.candidate)))
+        self._archive_historical_states()
         limit = self.cfg.history_depth * self.cfg.max_parents
         if len(self.snapshots) > limit:
             del self.snapshots[:-limit]
@@ -655,7 +656,7 @@ class Search:
         try previous generations, a diverse reservoir, then extra proposals.
         """
         cfg = self.cfg
-        if len(self.parents) >= cfg.max_parents:
+        if len(self.parents) >= cfg.max_parents or (cfg.adaptive_historical and self._forward_count()>=cfg.max_forward_branches):
             return False
         incumbent = min((x.candidate for x in self.parents), key=lambda c: c.score)
         threshold=self._diversity_threshold()
@@ -719,8 +720,8 @@ class Search:
             quality = (scores[i]-smin)/max(1e-15,smax-smin)
             trend = (momentum[i]-mmin)/max(1e-15,mmax-mmin)
             priority = (1-cfg.trend_weight)*quality - cfg.trend_weight*trend
-            if self._explorer_active(p):
-                continue  # retain protected exploratory paths until their trial ends
+            if self._explorer_active(p) or (p.branch_kind=="historical" and self.generation<p.historical_protected_until):
+                continue  # protected trial cannot be discarded early
             ranked.append((priority,i))
         if not ranked:
             return False
@@ -765,13 +766,27 @@ class Search:
             reference=max(self.reference_gain,1e-300)
             ratio=gain/reference
             progress_mode="rolling_gain"
-        if gain <= 0 or ratio < cfg.low_progress_ratio:
-            action="expand" if len(self.parents)<cfg.max_parents else "hold"
-            if action=="expand":
-                self._add_branch()
-        elif ratio >= cfg.high_progress_ratio and len(self.parents)>1:
-            action="contract"
-            self._contract()
+        weak=(gain<=0 or ratio<cfg.low_progress_ratio)
+        self.historical_weak_windows=self.historical_weak_windows+1 if weak else 0
+        if cfg.adaptive_historical:
+            self._promote_or_expire_historical()
+        if weak:
+            action="hold"
+            if (cfg.adaptive_historical
+                    and self._forward_count()>=cfg.max_forward_branches
+                    and self.historical_weak_windows>=cfg.historical_stall_windows
+                    and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
+                    and self._spawn_historical_branch()):
+                action="historical_expand"
+            elif self._add_branch():
+                action="expand"
+            elif (cfg.adaptive_historical
+                    and self.historical_weak_windows>=cfg.historical_stall_windows
+                    and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
+                    and self._spawn_historical_branch()):
+                action="historical_expand"
+        elif ratio>=cfg.high_progress_ratio and len(self.parents)>1:
+            action="contract" if self._contract() else "hold"
         else:
             action="hold"
         self.events.append({"generation":self.generation,"event":"progress_check",
