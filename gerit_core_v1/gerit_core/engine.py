@@ -589,26 +589,30 @@ class Search:
         for p in list(self.parents):
             if p.branch_kind!="historical" or self.generation<p.historical_protected_until:
                 continue
-            if (p.candidate.score<=self.best.score+self.cfg.absolute_regression
-                    and self._forward_count()<self.cfg.max_forward_branches):
-                p.branch_kind="forward"
-                p.historical_protected_until=0
-                self.historical_stats["promoted"]+=1
-                self.events.append({"generation":self.generation,"event":"historical_promote",
-                                    "lineage_id":p.lineage_id})
-            else:
-                self.parents.remove(p)
-                self.historical_stats["expired"]+=1
-                self.events.append({"generation":self.generation,"event":"historical_expire",
-                                    "branch_kind":p.branch_kind,
-                         "historical_protected_until":p.historical_protected_until,
-                         "historical_birth_generation":p.historical_birth_generation,
-                         "branch_kind":p.branch_kind,
-                         "historical_protected_until":p.historical_protected_until,
-                         "historical_birth_generation":p.historical_birth_generation,
-                         "lineage_id":p.lineage_id,
-                                    "initial_score":self._objective(p.historical_start_score),
-                                    "final_score":self._objective(p.candidate.score)})
+            if p.candidate.score<=self.best.score+self.cfg.absolute_regression:
+                forwards=[x for x in self.parents if x.branch_kind!="historical"]
+                if len(forwards)>=self.cfg.max_forward_branches:
+                    replaceable=[x for x in forwards if not self._explorer_active(x)]
+                    worst=max(replaceable,key=lambda x:x.candidate.score) if replaceable else None
+                    if worst is not None and p.candidate.score<worst.candidate.score:
+                        self.parents.remove(worst)
+                        self.events.append({"generation":self.generation,
+                            "event":"historical_replace_forward",
+                            "removed_lineage_id":worst.lineage_id,
+                            "promoted_lineage_id":p.lineage_id})
+                if self._forward_count()<self.cfg.max_forward_branches:
+                    p.branch_kind="forward"
+                    p.historical_protected_until=0
+                    self.historical_stats["promoted"]+=1
+                    self.events.append({"generation":self.generation,
+                        "event":"historical_promote","lineage_id":p.lineage_id})
+                    continue
+            self.parents.remove(p)
+            self.historical_stats["expired"]+=1
+            self.events.append({"generation":self.generation,"event":"historical_expire",
+                                "lineage_id":p.lineage_id,
+                                "initial_score":self._objective(p.historical_start_score),
+                                "final_score":self._objective(p.candidate.score)})
         if not self.parents:
             self.parents=[self._new_lineage(self.best,self.generation)]
 
