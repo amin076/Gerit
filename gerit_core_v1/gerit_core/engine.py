@@ -278,7 +278,7 @@ class Search:
              "kind":kind,
              "state":self.problem.encode(candidate.state)}
         with self.genealogy_path.open("a",encoding="utf8") as file:
-            file.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\\n")
+            file.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\n")
 
     def _save_best(self):
         if self.best is not None:
