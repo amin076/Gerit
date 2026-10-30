@@ -548,6 +548,106 @@ class Search:
         if len(self.snapshots) > limit:
             del self.snapshots[:-limit]
 
+    def _archive_historical_states(self):
+        """Keep a bounded, spaced archive of real old parent states."""
+        cfg=self.cfg
+        if not cfg.adaptive_historical or self.generation==self.historical_last_archive_generation:
+            return
+        if self.generation % cfg.historical_archive_interval:
+            return
+        self.historical_last_archive_generation=self.generation
+        sample=min(self.parents,key=lambda p:p.candidate.score).candidate
+        self.historical_archive.append((self.generation,deepcopy(sample)))
+        if len(self.historical_archive)>cfg.historical_archive_capacity:
+            archive=self.historical_archive
+            self.historical_archive=[archive[0]]+archive[2::2]
+            self.historical_archive=self.historical_archive[-cfg.historical_archive_capacity:]
+
+    def _historical_count(self):
+        return sum(p.branch_kind=="historical" for p in self.parents)
+
+    def _forward_count(self):
+        return sum(p.branch_kind!="historical" for p in self.parents)
+
+    def _promote_or_expire_historical(self):
+        """Protect a historical path for its entire trial, then reallocate."""
+        if not self.cfg.adaptive_historical:
+            return
+        for p in list(self.parents):
+            if p.branch_kind!="historical" or self.generation<p.historical_protected_until:
+                continue
+            if (p.candidate.score<=self.best.score+self.cfg.absolute_regression
+                    and self._forward_count()<self.cfg.max_forward_branches):
+                p.branch_kind="forward"
+                p.historical_protected_until=0
+                self.historical_stats["promoted"]+=1
+                self.events.append({"generation":self.generation,"event":"historical_promote",
+                                    "lineage_id":p.lineage_id})
+            else:
+                self.parents.remove(p)
+                self.historical_stats["expired"]+=1
+                self.events.append({"generation":self.generation,"event":"historical_expire",
+                                    "lineage_id":p.lineage_id,
+                                    "initial_score":self._objective(p.historical_start_score),
+                                    "final_score":self._objective(p.candidate.score)})
+        if not self.parents:
+            self.parents=[self._new_lineage(self.best,self.generation)]
+
+    def _spawn_historical_branch(self):
+        """Pick a structurally novel, old checkpoint, ignoring current quality cutoffs."""
+        cfg=self.cfg
+        if not cfg.adaptive_historical or self._historical_count()>=cfg.max_historical_branches:
+            return False
+        if len(self.parents)>=cfg.max_parents:
+            return False
+        options=[]
+        for born,candidate in self.historical_archive:
+            age=self.generation-born
+            if not cfg.historical_lookback_min<=age<=cfg.historical_lookback_max:
+                continue
+            if candidate.node_id in self.historical_used_node_ids:
+                continue
+            distances=[self._distance(candidate,p.candidate) for p in self.parents]
+            if not distances or min(distances)<self._diversity_threshold():
+                self.historical_stats["rejected_duplicate"]+=1
+                continue
+            options.append((born,candidate,min(distances)))
+        if not options:
+            self.historical_stats["insufficient_history"]+=1
+            self.events.append({"generation":self.generation,"event":"historical_shortfall"})
+            return False
+        ds=[d for _,_,d in options]
+        scores=[c.score for _,c,_ in options]
+        def norm(v,lo,hi):
+            return (v-lo)/(hi-lo) if hi>lo else 0.5
+        weights=(cfg.historical_structural_weight,cfg.historical_age_weight,
+                 cfg.historical_quality_weight)
+        def priority(item):
+            gen,candidate,d=item
+            age=self.generation-gen
+            return (weights[0]*norm(d,min(ds),max(ds))
+                    +weights[1]*(age-cfg.historical_lookback_min)
+                    /max(1,cfg.historical_lookback_max-cfg.historical_lookback_min)
+                    +weights[2]*(1-norm(candidate.score,min(scores),max(scores))))
+        born,chosen,distance=max(options,key=priority)
+        revived=self._new_lineage(chosen,self.generation) # independent step preferences
+        revived.branch_kind="historical"
+        revived.historical_protected_until=self.generation+cfg.historical_trial_generations
+        revived.historical_start_score=chosen.score
+        revived.historical_birth_generation=born
+        self.parents.append(revived)
+        self._write_genealogy(chosen,"historical_revive")
+        self.historical_used_node_ids.add(chosen.node_id)
+        self.historical_last_spawn=self.generation
+        self.historical_stats["spawned"]+=1
+        self.events.append({"generation":self.generation,"event":"historical_spawn",
+                            "lineage_id":revived.lineage_id,"seed_node_id":chosen.node_id,
+                            "from_generation":born,"rollback_generations":self.generation-born,
+                            "distance":distance,
+                            "protected_until":revived.historical_protected_until,
+                            "parents":len(self.parents)})
+        return True
+
     def _add_branch(self):
         """Grow by at most ONE lineage per adjustment. Historical states take priority.
 
