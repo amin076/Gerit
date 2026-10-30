@@ -193,6 +193,50 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(search._historical_count(),1)
             self.assertEqual(search._forward_count(),1)
 
+    def test_historical_only_never_spawns_ordinary_branch(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=4,initial_parents=1,
+                         adaptive_historical=True,historical_only_on_stall=True,
+                         fair_historical_budget=True,max_forward_branches=1,
+                         max_historical_branches=3,historical_forward_reserve=1,
+                         historical_lookback_min=20,historical_lookback_max=500,
+                         historical_stall_windows=2,historical_spawn_interval=20,
+                         output_dir=directory,diversity_fraction=0.,
+                         population_adjust_interval=20)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            root=Candidate((1.,),1.,node_id=1)
+            search.best=root
+            search.parents=[search._new_lineage(root,0)]
+            search.historical_archive=[
+                (20,Candidate((3.,),9.,node_id=2,parent_node_id=1)),
+                (40,Candidate((4.,),16.,node_id=3,parent_node_id=1)),
+                (60,Candidate((5.,),25.,node_id=4,parent_node_id=1))]
+            self.assertFalse(search._add_branch())
+            self.assertFalse(search._spawn_explorer(Candidate((2.,),4.,node_id=5),
+                                                   search.parents[0]))
+            search.checkpoint_score=1.
+            search.checkpoint_step=100
+            search.reference_gain=.1
+            search.generation=120
+            search._adjust_population()
+            self.assertEqual(search._historical_count(),0)
+            search.generation=140
+            search._adjust_population()
+            self.assertEqual(search._historical_count(),1)
+            self.assertEqual(search._forward_count(),1)
+            self.assertEqual(search.events[-1]["action"],"historical_expand")
+            self.assertFalse(any(e["event"]=="population_expand" for e in search.events))
+            self.assertEqual(search.historical_stats["spawned"],1)
+
+    def test_historical_only_settings_require_single_forward_path(self):
+        with self.assertRaises(ValueError):
+            Settings(adaptive_historical=True,historical_only_on_stall=True,
+                     max_forward_branches=5,max_historical_branches=5).validate({"step":step})
+        with self.assertRaises(ValueError):
+            Settings(historical_only_on_stall=True,max_forward_branches=1,
+                     max_historical_branches=9).validate({"step":step})
+
     def test_historical_settings_are_opt_in_and_validated(self):
         with self.assertRaises(ValueError):
             Settings(adaptive_historical=True,max_parents=10,
