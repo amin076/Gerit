@@ -129,6 +129,68 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(search.parents[-1].candidate.node_id,2)
             self.assertLessEqual(len(search.parents),cfg.max_parents)
 
+    def test_fair_historical_depth_budget_and_record_preservation(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=3,initial_parents=1,
+                         adaptive_historical=True,fair_historical_budget=True,
+                         max_forward_branches=1,max_historical_branches=2,
+                         historical_forward_reserve=1,
+                         historical_lookback_min=100,historical_lookback_max=1000,
+                         historical_trial_generations=100,
+                         historical_depth_budget_ratio=0.75,
+                         historical_max_trial_generations=900,
+                         historical_progress_window=100,
+                         output_dir=directory,diversity_fraction=0.0)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            search.generation=700
+            root=Candidate((1.,),1.,node_id=1)
+            search.best=root
+            search.parents=[search._new_lineage(root,0)]
+            older=Candidate((2.,),4.,node_id=2,parent_node_id=1)
+            search.historical_archive=[(100,older)]
+            self.assertTrue(search._spawn_historical_branch())
+            h=search.parents[-1]
+            self.assertEqual(h.historical_protected_until,1150) # 600 * .75
+            self.assertEqual(h.historical_max_until,1600)
+            search.generation=1140
+            h.historical_best_score=.8
+            h.historical_best_candidate=Candidate((.894427190999916,),.8,node_id=5,parent_node_id=2)
+            h.candidate=Candidate((3.,),9.,node_id=6,parent_node_id=5)
+            self.assertFalse(search._contract()) # last forward protected; history protected
+            search.generation=1150
+            search._promote_or_expire_historical()
+            self.assertEqual(search.historical_stats["promoted"],1)
+            self.assertEqual(h.branch_kind,"forward")
+            self.assertEqual(h.candidate.node_id,5) # best-so-far, not last uphill position
+
+    def test_fair_historical_weak_stall_interleaves_after_forward_reserve(self):
+        from gerit_core.engine import Candidate
+        with TemporaryDirectory() as directory:
+            cfg=Settings(iterations=1,max_parents=3,initial_parents=1,
+                         adaptive_historical=True,fair_historical_budget=True,
+                         max_forward_branches=2,max_historical_branches=1,
+                         historical_forward_reserve=1,
+                         historical_lookback_min=100,historical_lookback_max=500,
+                         historical_stall_windows=2,historical_spawn_interval=40,
+                         output_dir=directory,diversity_fraction=0.,
+                         population_adjust_interval=20)
+            search=Search(OneDimensional(),{"step":step},cfg)
+            root=Candidate((1.,),1.,node_id=1)
+            older=Candidate((3.,),9.,node_id=2,parent_node_id=1)
+            search.parents=[search._new_lineage(root,0)]
+            search.best=root
+            search.checkpoint_score=1.
+            search.checkpoint_step=100
+            search.reference_gain=.1
+            search.historical_archive=[(20,older)]
+            search.generation=120
+            search._adjust_population()
+            search.generation=140
+            search._adjust_population()
+            self.assertEqual(search._historical_count(),1)
+            self.assertEqual(search._forward_count(),1)
+
     def test_historical_settings_are_opt_in_and_validated(self):
         with self.assertRaises(ValueError):
             Settings(adaptive_historical=True,max_parents=10,
