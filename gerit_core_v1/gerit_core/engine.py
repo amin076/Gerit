@@ -806,9 +806,13 @@ class Search:
         # Branch strategies inherit from an existing lineage. Search policy is
         # separate from the domain-specific candidate state.
         ancestor=min(self.parents,key=lambda p:self.problem.distance(chosen.state,p.candidate.state))
-        self.parents.append(self._new_lineage(chosen,self.generation,ancestor))
+        created=self._new_lineage(chosen,self.generation,ancestor)
+        self.parents.append(created)
         self._write_genealogy(chosen,"branch_seed")
         self.events.append({"generation":self.generation,"event":"population_expand",
+            "lineage_id":created.lineage_id,
+            "parent_lineage_id":ancestor.lineage_id,
+            "seed_node_id":chosen.node_id,
             "parents":len(self.parents),"source":source,"attempts":attempts,
             "rollback_generations":self.generation-gen if source=="history" else 0})
         return True
