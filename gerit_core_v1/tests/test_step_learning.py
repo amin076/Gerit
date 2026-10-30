@@ -157,6 +157,8 @@ class StepLearningTests(unittest.TestCase):
             h.historical_best_score=.8
             h.historical_best_candidate=Candidate((.894427190999916,),.8,node_id=5,parent_node_id=2)
             h.candidate=Candidate((3.,),9.,node_id=6,parent_node_id=5)
+            h.historical_progress_checkpoint=.8
+            h.historical_progress_last_generation=1140
             self.assertFalse(search._contract()) # last forward protected; history protected
             search.generation=1150
             search._promote_or_expire_historical()
