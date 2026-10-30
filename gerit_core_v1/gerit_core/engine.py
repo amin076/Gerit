@@ -847,7 +847,10 @@ class Search:
                          "explorer_origin_operator":p.explorer_origin_operator,
                          "lineage_id":p.lineage_id,
                          "parent_lineage_id":p.parent_lineage_id,
-                         "explorer_credited":p.explorer_credited}
+                         "explorer_credited":p.explorer_credited,
+                         "branch_kind":p.branch_kind,
+                         "historical_protected_until":p.historical_protected_until,
+                         "historical_birth_generation":p.historical_birth_generation}
                         for p in self.parents],
             "operator_weights": self.weights,
             "best_origin":self.best_origin,
