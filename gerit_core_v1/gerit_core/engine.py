@@ -491,7 +491,9 @@ class Search:
         """Give a distinct, temporarily worse jump an independent multi-gen path."""
         cfg=self.cfg
         active=sum(self._explorer_active(p) for p in self.parents)
-        if len(self.parents)>=cfg.max_parents or active>=cfg.max_explorers:
+        if (len(self.parents)>=cfg.max_parents or active>=cfg.max_explorers
+                or (cfg.adaptive_historical and
+                    self._forward_count()>=cfg.max_forward_branches)):
             self.explorer_stats["rejected_capacity"]+=1
             return False
         threshold=self._diversity_threshold()
@@ -588,7 +590,10 @@ class Search:
                 self.parents.remove(p)
                 self.historical_stats["expired"]+=1
                 self.events.append({"generation":self.generation,"event":"historical_expire",
-                                    "lineage_id":p.lineage_id,
+                                    "branch_kind":p.branch_kind,
+                         "historical_protected_until":p.historical_protected_until,
+                         "historical_birth_generation":p.historical_birth_generation,
+                         "lineage_id":p.lineage_id,
                                     "initial_score":self._objective(p.historical_start_score),
                                     "final_score":self._objective(p.candidate.score)})
         if not self.parents:
@@ -828,6 +833,8 @@ class Search:
             "best_origin":self.best_origin,
             "best_record_count":len(self.best_records),
             "late_credit_events":self.late_credit_events,
+            "historical_stats":self.historical_stats,
+            "historical_archive_count":len(self.historical_archive),
             "operator_memory": self.operator_memory,
             "operator_stats":self.operator_stats,
             "step_stats":self.step_stats,
@@ -1012,6 +1019,8 @@ class Search:
                     "genealogy_file":"genealogy.jsonl",
                     "best_records":self.best_records,
                     "late_credit_events":self.late_credit_events,
+                    "historical_stats":self.historical_stats,
+                    "historical_archive_count":len(self.historical_archive),
                     "step_stats":self.step_stats,
                     "explorer_stats":self.explorer_stats,
                     "population_diversity":self._population_diversity()})
