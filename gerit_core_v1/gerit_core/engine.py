@@ -22,6 +22,7 @@ class Settings:
     population_adjust_interval: int = 20
     history_depth: int = 120
     adaptive_historical: bool = False
+    historical_only_on_stall: bool = False
     max_forward_branches: int = 5
     max_historical_branches: int = 5
     historical_lookback_min: int = 100
@@ -84,6 +85,13 @@ class Settings:
                     "population_adjust_interval", "history_depth"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be positive")
+        if self.historical_only_on_stall:
+            if not self.adaptive_historical:
+                raise ValueError("historical_only_on_stall requires adaptive_historical")
+            if self.initial_parents!=1 or self.max_forward_branches!=1:
+                raise ValueError("historical-only requires one initial/forward lineage")
+            if self.max_historical_branches!=self.max_parents-1:
+                raise ValueError("historical-only requires max_historical_branches=max_parents-1")
         if self.adaptive_historical:
             for key in ("max_forward_branches","max_historical_branches",
                         "historical_lookback_min","historical_lookback_max",
@@ -524,6 +532,8 @@ class Search:
     def _spawn_explorer(self,candidate,ancestor,origin_operator="",origin_intensity=0.):
         """Give a distinct, temporarily worse jump an independent multi-gen path."""
         cfg=self.cfg
+        if cfg.historical_only_on_stall:
+            return False
         active=sum(self._explorer_active(p) for p in self.parents)
         if (len(self.parents)>=cfg.max_parents or active>=cfg.max_explorers
                 or (cfg.adaptive_historical and
@@ -731,7 +741,30 @@ class Search:
                     +weights[1]*(age-cfg.historical_lookback_min)
                     /max(1,cfg.historical_lookback_max-cfg.historical_lookback_min)
                     +weights[2]*(1-norm(candidate.score,min(scores),max(scores))))
-        born,chosen,distance=max(options,key=priority)
+        if cfg.historical_only_on_stall:
+            # Fill gaps in lookback ages, instead of repeatedly selecting the
+            # single furthest/best historical checkpoint.
+            active_ages=[self.generation-p.historical_birth_generation
+                         for p in self.parents if p.branch_kind=="historical"]
+            # Distinct intervals across the currently available archive.
+            oldest=max(self.generation-gen for gen,_,_ in options)
+            youngest=min(self.generation-gen for gen,_,_ in options)
+            # Space target ages across up to nine slots; unfilled age bands
+            # receive priority, with structural novelty breaking ties.
+            slots=max(1,cfg.max_historical_branches)
+            targets=[youngest+(oldest-youngest)*(i+1)/(slots+1)
+                     for i in range(slots)]
+            if active_ages:
+                targets.sort(key=lambda t:min(abs(t-age) for age in active_ages),
+                             reverse=True)
+            target=targets[0]
+            span=max(1,oldest-youngest)
+            born,chosen,distance=max(options,key=lambda item:(
+                -abs((self.generation-item[0])-target)/span
+                +0.2*priority(item),
+                item[2]))
+        else:
+            born,chosen,distance=max(options,key=priority)
         revived=self._new_lineage(chosen,self.generation) # independent step preferences
         revived.branch_kind="historical"
         rollback=self.generation-born
@@ -770,6 +803,8 @@ class Search:
         try previous generations, a diverse reservoir, then extra proposals.
         """
         cfg = self.cfg
+        if cfg.historical_only_on_stall:
+            return False  # no ordinary population expansion, ever
         if len(self.parents) >= cfg.max_parents or (cfg.adaptive_historical and self._forward_count()>=cfg.max_forward_branches):
             return False
         incumbent = min((x.candidate for x in self.parents), key=lambda c: c.score)
@@ -846,7 +881,14 @@ class Search:
             ranked.append((priority,i))
         if not ranked:
             return False
-        if cfg.adaptive_historical and cfg.fair_historical_budget:
+        if cfg.historical_only_on_stall:
+            # Never contract the sole forward path. Historical branches are
+            # eligible only after their protected trial has elapsed.
+            ranked=[(priority,i) for priority,i in ranked
+                    if self.parents[i].branch_kind=="historical"]
+            if not ranked:
+                return False
+        elif cfg.adaptive_historical and cfg.fair_historical_budget:
             # Contract forward search first (except the last live forward
             # lineage); historical branches are managed by their own budget.
             forward_ranked=[(priority,i) for priority,i in ranked
@@ -908,7 +950,13 @@ class Search:
             self._promote_or_expire_historical()
         if weak:
             action="hold"
-            if (cfg.adaptive_historical and cfg.fair_historical_budget
+            if cfg.historical_only_on_stall:
+                # Every newly opened lineage is historical. No local clones.
+                if (self.historical_weak_windows>=cfg.historical_stall_windows
+                        and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
+                        and self._spawn_historical_branch()):
+                    action="historical_expand"
+            elif (cfg.adaptive_historical and cfg.fair_historical_budget
                     and self._forward_count()>=cfg.historical_forward_reserve
                     and self.historical_weak_windows>=cfg.historical_stall_windows
                     and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
@@ -920,9 +968,9 @@ class Search:
                     and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
                     and self._spawn_historical_branch()):
                 action="historical_expand"
-            elif self._add_branch():
+            elif not cfg.historical_only_on_stall and self._add_branch():
                 action="expand"
-            elif (cfg.adaptive_historical
+            elif (not cfg.historical_only_on_stall and cfg.adaptive_historical
                     and self.historical_weak_windows>=cfg.historical_stall_windows
                     and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
                     and self._spawn_historical_branch()):
