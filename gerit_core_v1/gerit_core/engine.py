@@ -651,14 +651,6 @@ class Search:
                     p.historical_progress_last_generation=self.generation
                 if self.generation<p.historical_protected_until:
                     continue
-                # A historical branch that was the source of a global record is
-                # credited using its best-ever state, not its latest uphill step.
-                if (p.historical_best_score<=self.best.score+1e-10
-                    and self.generation<p.historical_max_until):
-                    p.historical_protected_until=min(p.historical_max_until,
-                        self.generation+cfg.historical_progress_extension)
-                    self.historical_stats["progress_preserved"]+=1
-                    continue
             if score<=self.best.score+cfg.absolute_regression:
                 forwards=[x for x in self.parents if x.branch_kind!="historical"]
                 if len(forwards)>=cfg.max_forward_branches:
@@ -680,6 +672,19 @@ class Search:
                         "event":"historical_promote","lineage_id":p.lineage_id,
                         "best_score":self._objective(score)})
                     continue
+            # If a record-making branch cannot yet be promoted (for example,
+            # all forward seats are occupied by protected explorers), retain it
+            # rather than discarding its proven best-ever state.
+            if (cfg.fair_historical_budget
+                    and score<=self.best.score+1e-10
+                    and self.generation<p.historical_max_until):
+                p.historical_protected_until=min(p.historical_max_until,
+                    self.generation+cfg.historical_progress_extension)
+                self.historical_stats["progress_preserved"]+=1
+                self.events.append({"generation":self.generation,
+                    "event":"historical_preserve_record","lineage_id":p.lineage_id,
+                    "protected_until":p.historical_protected_until})
+                continue
             self.parents.remove(p)
             self.historical_stats["expired"]+=1
             self.events.append({"generation":self.generation,"event":"historical_expire",
