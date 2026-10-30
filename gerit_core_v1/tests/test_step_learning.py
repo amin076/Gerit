@@ -171,7 +171,7 @@ class StepLearningTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             cfg=Settings(iterations=1,max_parents=3,initial_parents=1,
                          adaptive_historical=True,fair_historical_budget=True,
-                         max_forward_branches=2,max_historical_branches=1,
+                         max_forward_branches=1,max_historical_branches=2,
                          historical_forward_reserve=1,
                          historical_lookback_min=100,historical_lookback_max=500,
                          historical_stall_windows=2,historical_spawn_interval=40,
