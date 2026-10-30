@@ -117,10 +117,31 @@ def render_best_ancestry_video(output, problem, *, fps=30, width=900,
     if target is None:
         raise ValueError("This run has no node IDs; run with the genealogy-enabled engine")
     nodes={}
-    with (output/"genealogy.jsonl").open(encoding="utf8") as file:
-        for line in file:
-            row=json.loads(line)
-            nodes[row["node_id"]]=row
+    # Earlier Gerit versions accidentally wrote literal backslash-n separators.
+    # JSONDecoder.raw_decode handles both old concatenated objects and true JSONL
+    # without changing or destroying the original experiment archive.
+    content=(output/"genealogy.jsonl").read_text(encoding="utf8")
+    decoder=json.JSONDecoder()
+    pos=0
+    while pos<len(content):
+        while pos<len(content) and content[pos].isspace():
+            pos+=1
+        if content.startswith(chr(92)+"n",pos):
+            pos+=2
+            continue
+        if pos>=len(content):
+            break
+        try:
+            row,end=decoder.raw_decode(content,pos)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid genealogy record near character {pos}; "
+                "please preserve genealogy.jsonl for diagnosis"
+            ) from exc
+        if not isinstance(row,dict) or "node_id" not in row:
+            raise ValueError(f"Malformed genealogy record at character {pos}")
+        nodes[row["node_id"]]=row
+        pos=end
     chain=[]
     visited=set()
     current=target
