@@ -837,6 +837,21 @@ class Search:
             ranked.append((priority,i))
         if not ranked:
             return False
+        if cfg.adaptive_historical and cfg.fair_historical_budget:
+            # Contract forward search first (except the last live forward
+            # lineage); historical branches are managed by their own budget.
+            forward_ranked=[(priority,i) for priority,i in ranked
+                            if self.parents[i].branch_kind!="historical"
+                            and self._forward_count()>1]
+            if forward_ranked:
+                ranked=forward_ranked
+            else:
+                # Do not pre-empt historical branches prior to their
+                # independently allocated evaluation horizons.
+                ranked=[(priority,i) for priority,i in ranked
+                        if self.parents[i].branch_kind!="historical"]
+                if not ranked:
+                    return False
         _,drop=max(ranked)
         removed=self.parents.pop(drop)
         self.events.append({"generation":self.generation,"event":"population_contract",
@@ -884,7 +899,13 @@ class Search:
             self._promote_or_expire_historical()
         if weak:
             action="hold"
-            if (cfg.adaptive_historical
+            if (cfg.adaptive_historical and cfg.fair_historical_budget
+                    and self._forward_count()>=cfg.historical_forward_reserve
+                    and self.historical_weak_windows>=cfg.historical_stall_windows
+                    and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
+                    and self._spawn_historical_branch()):
+                action="historical_expand"
+            elif (cfg.adaptive_historical and not cfg.fair_historical_budget
                     and self._forward_count()>=cfg.max_forward_branches
                     and self.historical_weak_windows>=cfg.historical_stall_windows
                     and self.generation-self.historical_last_spawn>=cfg.historical_spawn_interval
