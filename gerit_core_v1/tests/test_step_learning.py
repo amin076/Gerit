@@ -218,6 +218,12 @@ class StepLearningTests(unittest.TestCase):
             self.assertEqual(descendant.historical_origin_generation,200)
             self.assertEqual(descendant.historical_seed_node_id,2)
             self.assertEqual(descendant.parent_lineage_id,historical.lineage_id)
+            # A geometrically close but unrelated lineage must not inherit
+            # ancestry from an arbitrarily chosen policy ancestor.
+            unrelated=Candidate((3.,),9.,node_id=99,parent_node_id=1)
+            unrelated_child=search._new_lineage(unrelated,202,historical)
+            self.assertEqual(unrelated_child.historical_origin_lineage_id,0)
+            self.assertEqual(unrelated_child.historical_seed_node_id,0)
 
     def test_historical_settings_are_opt_in_and_validated(self):
         with self.assertRaises(ValueError):
