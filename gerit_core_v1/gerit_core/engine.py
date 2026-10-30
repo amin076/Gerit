@@ -167,6 +167,9 @@ class Candidate:
     score: float
     node_id: int = 0
     parent_node_id: int = None
+    historical_origin_lineage_id: int = 0
+    historical_origin_generation: int = 0
+    historical_seed_node_id: int = 0
 
 
 @dataclass
@@ -303,6 +306,9 @@ class Search:
              "evaluation":self.evaluations,
              "objective":self._objective(candidate.score),
              "kind":kind,
+             "historical_origin_lineage_id":candidate.historical_origin_lineage_id,
+             "historical_origin_generation":candidate.historical_origin_generation,
+             "historical_seed_node_id":candidate.historical_seed_node_id,
              "state":self.problem.encode(candidate.state)}
         with self.genealogy_path.open("a",encoding="utf8") as file:
             file.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\n")
@@ -329,17 +335,20 @@ class Search:
         candidate = Candidate(deepcopy(state), -value if self.cfg.maximize else value,
                               self.next_node_id, parent_node_id)
         self.next_node_id += 1
+        source_id=(origin or {}).get("lineage_id")
+        source_lineage=next((p for p in self.parents if p.lineage_id==source_id),None)
+        if source_lineage is not None:
+            candidate.historical_origin_lineage_id=source_lineage.historical_origin_lineage_id
+            candidate.historical_origin_generation=source_lineage.historical_origin_generation
+            candidate.historical_seed_node_id=source_lineage.historical_seed_node_id
         if self.best is None or candidate.score < self.best.score:
             previous=None if self.best is None else self.best.score
             self.best = deepcopy(candidate)
             self.best_origin=dict(origin or {"type":"initial","lineage_id":None,
                                              "operator":None,"intensity":None})
-            source_id=self.best_origin.get("lineage_id")
-            source_lineage=next((p for p in self.parents if p.lineage_id==source_id),None)
-            if source_lineage is not None:
-                self.best_origin["historical_origin_lineage_id"]=source_lineage.historical_origin_lineage_id
-                self.best_origin["historical_origin_generation"]=source_lineage.historical_origin_generation
-                self.best_origin["historical_seed_node_id"]=source_lineage.historical_seed_node_id
+            self.best_origin["historical_origin_lineage_id"]=candidate.historical_origin_lineage_id
+            self.best_origin["historical_origin_generation"]=candidate.historical_origin_generation
+            self.best_origin["historical_seed_node_id"]=candidate.historical_seed_node_id
             record={"generation":self.generation,"evaluation":self.evaluations,
                     "objective":self._objective(candidate.score),
                     "previous_objective":None if previous is None else self._objective(previous),
@@ -394,9 +403,9 @@ class Search:
                        step_attempts=attempts,step_successes=successes,
                        lineage_id=identity,
                        parent_lineage_id=ancestor.lineage_id if ancestor else 0,
-                       historical_origin_lineage_id=ancestor.historical_origin_lineage_id if ancestor else 0,
-                       historical_origin_generation=ancestor.historical_origin_generation if ancestor else 0,
-                       historical_seed_node_id=ancestor.historical_seed_node_id if ancestor else 0)
+                       historical_origin_lineage_id=candidate.historical_origin_lineage_id,
+                       historical_origin_generation=candidate.historical_origin_generation,
+                       historical_seed_node_id=candidate.historical_seed_node_id)
 
     def _operator_preference(self,name):
         """Blend long-term quality/cost evidence with a bounded recent window."""
@@ -751,6 +760,9 @@ class Search:
         revived.historical_origin_lineage_id=revived.lineage_id
         revived.historical_origin_generation=self.generation
         revived.historical_seed_node_id=chosen.node_id
+        revived.candidate.historical_origin_lineage_id=revived.lineage_id
+        revived.candidate.historical_origin_generation=self.generation
+        revived.candidate.historical_seed_node_id=chosen.node_id
         rollback=self.generation-born
         trial=(max(cfg.historical_trial_generations,
                    math.ceil(cfg.historical_depth_budget_ratio*rollback))
