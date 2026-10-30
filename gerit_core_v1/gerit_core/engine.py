@@ -27,6 +27,13 @@ class Settings:
     historical_lookback_min: int = 100
     historical_lookback_max: int = 1500
     historical_trial_generations: int = 300
+    fair_historical_budget: bool = False
+    historical_depth_budget_ratio: float = 0.75
+    historical_max_trial_generations: int = 1200
+    historical_progress_extension: int = 100
+    historical_progress_window: int = 100
+    historical_min_progress_fraction: float = 0.00001
+    historical_forward_reserve: int = 2
     historical_uphill_probability: float = 0.20
     historical_regression_fraction: float = 0.08
     historical_jump_probability: float = 0.20
@@ -96,6 +103,16 @@ class Settings:
                     raise ValueError(f"{key} must be between 0 and 1")
             if not math.isfinite(self.historical_regression_fraction) or self.historical_regression_fraction<0:
                 raise ValueError("historical_regression_fraction must be nonnegative")
+            if self.fair_historical_budget:
+                if self.historical_depth_budget_ratio<0 or not math.isfinite(self.historical_depth_budget_ratio):
+                    raise ValueError("historical_depth_budget_ratio must be nonnegative")
+                if not (1<=self.historical_forward_reserve<=self.max_forward_branches):
+                    raise ValueError("historical_forward_reserve must be within forward capacity")
+                for key in ("historical_max_trial_generations","historical_progress_extension","historical_progress_window"):
+                    if getattr(self,key)<1:
+                        raise ValueError(f"{key} must be positive")
+                if not math.isfinite(self.historical_min_progress_fraction) or self.historical_min_progress_fraction<0:
+                    raise ValueError("historical_min_progress_fraction must be nonnegative")
             weights=(self.historical_structural_weight,self.historical_age_weight,
                      self.historical_quality_weight)
             if any(not math.isfinite(w) or w<0 for w in weights) or sum(weights)<=0:
@@ -176,6 +193,12 @@ class Lineage:
     historical_protected_until: int = 0
     historical_start_score: float = 0.0
     historical_birth_generation: int = 0
+    historical_activated_generation: int = 0
+    historical_max_until: int = 0
+    historical_best_score: float = float("inf")
+    historical_best_candidate: object = None
+    historical_progress_checkpoint: float = float("inf")
+    historical_progress_last_generation: int = 0
 
 
 @dataclass
@@ -242,6 +265,7 @@ class Search:
         self.historical_last_spawn = -10**9
         self.historical_weak_windows = 0
         self.historical_stats = {"spawned":0,"promoted":0,"expired":0,
+                                 "extended":0,"progress_preserved":0,
                                  "rejected_duplicate":0,"insufficient_history":0}
         self.historical_last_archive_generation = -1
         self.reference_gain = None   # adaptive local progress scale
@@ -582,37 +606,87 @@ class Search:
     def _forward_count(self):
         return sum(p.branch_kind!="historical" for p in self.parents)
 
+    def _historical_progress(self,p):
+        """Best-so-far improvement over the recent evaluation horizon."""
+        cfg=self.cfg
+        if p.historical_best_candidate is None:
+            return 0.
+        elapsed=max(1,self.generation-p.historical_progress_last_generation)
+        if elapsed<cfg.historical_progress_window:
+            return 0.
+        return max(0.,p.historical_progress_checkpoint-p.historical_best_score)/max(
+            1.,abs(p.historical_progress_checkpoint))
+
     def _promote_or_expire_historical(self):
-        """Protect a historical path for its entire trial, then reallocate."""
+        """Give historical trajectories a depth-related budget and reward proven discoveries."""
         if not self.cfg.adaptive_historical:
             return
+        cfg=self.cfg
         for p in list(self.parents):
-            if p.branch_kind!="historical" or self.generation<p.historical_protected_until:
+            if p.branch_kind!="historical":
                 continue
-            if p.candidate.score<=self.best.score+self.cfg.absolute_regression:
+            if not cfg.fair_historical_budget:
+                if self.generation<p.historical_protected_until:
+                    continue
+                score=p.candidate.score
+            else:
+                score=p.historical_best_score
+                if p.historical_best_candidate is None:
+                    p.historical_best_candidate=deepcopy(p.candidate)
+                    p.historical_best_score=p.candidate.score
+                    score=p.candidate.score
+                if self.generation-p.historical_progress_last_generation>=cfg.historical_progress_window:
+                    progress=self._historical_progress(p)
+                    if progress>=cfg.historical_min_progress_fraction:
+                        until=min(p.historical_max_until,
+                            max(p.historical_protected_until,self.generation)
+                            +cfg.historical_progress_extension)
+                        if until>p.historical_protected_until:
+                            p.historical_protected_until=until
+                            self.historical_stats["extended"]+=1
+                            self.events.append({"generation":self.generation,
+                                "event":"historical_extend","lineage_id":p.lineage_id,
+                                "progress":progress,"protected_until":until})
+                    p.historical_progress_checkpoint=score
+                    p.historical_progress_last_generation=self.generation
+                if self.generation<p.historical_protected_until:
+                    continue
+                # A historical branch that was the source of a global record is
+                # credited using its best-ever state, not its latest uphill step.
+                if (p.historical_best_score<=self.best.score+1e-10
+                    and self.generation<p.historical_max_until):
+                    p.historical_protected_until=min(p.historical_max_until,
+                        self.generation+cfg.historical_progress_extension)
+                    self.historical_stats["progress_preserved"]+=1
+                    continue
+            if score<=self.best.score+cfg.absolute_regression:
                 forwards=[x for x in self.parents if x.branch_kind!="historical"]
-                if len(forwards)>=self.cfg.max_forward_branches:
+                if len(forwards)>=cfg.max_forward_branches:
                     replaceable=[x for x in forwards if not self._explorer_active(x)]
                     worst=max(replaceable,key=lambda x:x.candidate.score) if replaceable else None
-                    if worst is not None and p.candidate.score<worst.candidate.score:
+                    if worst is not None and score<worst.candidate.score:
                         self.parents.remove(worst)
                         self.events.append({"generation":self.generation,
                             "event":"historical_replace_forward",
                             "removed_lineage_id":worst.lineage_id,
                             "promoted_lineage_id":p.lineage_id})
-                if self._forward_count()<self.cfg.max_forward_branches:
+                if self._forward_count()<cfg.max_forward_branches:
+                    if cfg.fair_historical_budget and p.historical_best_candidate is not None:
+                        p.candidate=deepcopy(p.historical_best_candidate)
                     p.branch_kind="forward"
                     p.historical_protected_until=0
                     self.historical_stats["promoted"]+=1
                     self.events.append({"generation":self.generation,
-                        "event":"historical_promote","lineage_id":p.lineage_id})
+                        "event":"historical_promote","lineage_id":p.lineage_id,
+                        "best_score":self._objective(score)})
                     continue
             self.parents.remove(p)
             self.historical_stats["expired"]+=1
             self.events.append({"generation":self.generation,"event":"historical_expire",
                                 "lineage_id":p.lineage_id,
                                 "initial_score":self._objective(p.historical_start_score),
-                                "final_score":self._objective(p.candidate.score)})
+                                "final_score":self._objective(p.candidate.score),
+                                "best_score":self._objective(score)})
         if not self.parents:
             self.parents=[self._new_lineage(self.best,self.generation)]
 
@@ -655,9 +729,20 @@ class Search:
         born,chosen,distance=max(options,key=priority)
         revived=self._new_lineage(chosen,self.generation) # independent step preferences
         revived.branch_kind="historical"
-        revived.historical_protected_until=self.generation+cfg.historical_trial_generations
+        rollback=self.generation-born
+        trial=(max(cfg.historical_trial_generations,
+                   math.ceil(cfg.historical_depth_budget_ratio*rollback))
+               if cfg.fair_historical_budget else cfg.historical_trial_generations)
+        trial=min(trial,cfg.historical_max_trial_generations) if cfg.fair_historical_budget else trial
+        revived.historical_protected_until=self.generation+trial
+        revived.historical_max_until=self.generation+max(trial,cfg.historical_max_trial_generations)
         revived.historical_start_score=chosen.score
         revived.historical_birth_generation=born
+        revived.historical_activated_generation=self.generation
+        revived.historical_best_score=chosen.score
+        revived.historical_best_candidate=deepcopy(chosen)
+        revived.historical_progress_checkpoint=chosen.score
+        revived.historical_progress_last_generation=self.generation
         self.parents.append(revived)
         self._write_genealogy(chosen,"historical_revive")
         self.historical_used_node_ids.add(chosen.node_id)
@@ -668,6 +753,8 @@ class Search:
                             "from_generation":born,"rollback_generations":self.generation-born,
                             "distance":distance,
                             "protected_until":revived.historical_protected_until,
+                            "max_until":revived.historical_max_until,
+                            "allocated_trial_generations":trial,
                             "parents":len(self.parents)})
         return True
 
@@ -850,7 +937,10 @@ class Search:
                          "explorer_credited":p.explorer_credited,
                          "branch_kind":p.branch_kind,
                          "historical_protected_until":p.historical_protected_until,
-                         "historical_birth_generation":p.historical_birth_generation}
+                         "historical_birth_generation":p.historical_birth_generation,
+                         "historical_best_score":self._objective(p.historical_best_score)
+                           if p.branch_kind=="historical" else None,
+                         "historical_max_until":p.historical_max_until}
                         for p in self.parents],
             "operator_weights": self.weights,
             "best_origin":self.best_origin,
@@ -981,6 +1071,10 @@ class Search:
                     if len(lineage.progress)>cfg.competition_generations:
                         del lineage.progress[:-cfg.competition_generations]
                     lineage.candidate=child
+                    if (lineage.branch_kind=="historical"
+                            and child.score<lineage.historical_best_score):
+                        lineage.historical_best_score=child.score
+                        lineage.historical_best_candidate=deepcopy(child)
                     self._write_genealogy(child,"selected_parent")
                     # A completed exploration trial may subsequently make a new
                     # improvement. Credit its originating move at most once,
