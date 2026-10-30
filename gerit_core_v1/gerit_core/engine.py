@@ -27,6 +27,9 @@ class Settings:
     historical_lookback_min: int = 100
     historical_lookback_max: int = 1500
     historical_trial_generations: int = 300
+    historical_uphill_probability: float = 0.20
+    historical_regression_fraction: float = 0.08
+    historical_jump_probability: float = 0.20
     historical_spawn_interval: int = 100
     historical_archive_interval: int = 20
     historical_archive_capacity: int = 320
@@ -88,6 +91,11 @@ class Settings:
                 raise ValueError("initial_parents exceeds forward slots")
             if self.historical_lookback_max<self.historical_lookback_min:
                 raise ValueError("historical lookback maximum must exceed minimum")
+            for key in ("historical_uphill_probability","historical_jump_probability"):
+                if not 0<=getattr(self,key)<=1:
+                    raise ValueError(f"{key} must be between 0 and 1")
+            if not math.isfinite(self.historical_regression_fraction) or self.historical_regression_fraction<0:
+                raise ValueError("historical_regression_fraction must be nonnegative")
             weights=(self.historical_structural_weight,self.historical_age_weight,
                      self.historical_quality_weight)
             if any(not math.isfinite(w) or w<0 for w in weights) or sum(weights)<=0:
@@ -383,6 +391,8 @@ class Search:
         names = list(self.operators)
         total = sum(self.weights.values())
         floor = self.cfg.exploration_floor
+        if lineage is not None and lineage.branch_kind=="historical":
+            floor=max(floor,0.35)
         probs = [(1-floor)*self.weights[n]/total + floor/len(names) for n in names]
         name = self.rng.choices(names, weights=probs, k=1)[0]
         t0=time.perf_counter()
@@ -591,6 +601,9 @@ class Search:
                 self.historical_stats["expired"]+=1
                 self.events.append({"generation":self.generation,"event":"historical_expire",
                                     "branch_kind":p.branch_kind,
+                         "historical_protected_until":p.historical_protected_until,
+                         "historical_birth_generation":p.historical_birth_generation,
+                         "branch_kind":p.branch_kind,
                          "historical_protected_until":p.historical_protected_until,
                          "historical_birth_generation":p.historical_birth_generation,
                          "lineage_id":p.lineage_id,
@@ -904,15 +917,24 @@ class Search:
                         self._step_feedback(lineage,k,parent,child)
                         if child is not None and child.score<parent.score:
                             improvements.append(child)
-                        elif (child is not None and self._explorer_active(lineage)
-                              and child.score<=min(lineage.explorer_baseline,
-                                                   self.best.score+cfg.absolute_regression)
+                        elif (child is not None and
+                              ((self._explorer_active(lineage) and
+                                child.score<=min(lineage.explorer_baseline,
+                                                 self.best.score+cfg.absolute_regression))
+                               or (lineage.branch_kind=="historical" and
+                                   self.generation<lineage.historical_protected_until and
+                                   child.score<=lineage.historical_start_score
+                                   +max(cfg.absolute_regression,
+                                        cfg.historical_regression_fraction*
+                                        abs(lineage.historical_start_score))))
                               and self._distance(child,parent)>=cfg.min_distance):
                             alternate.append(child)
                     # A continuous, explicit chance to test a much longer jump,
                     # even after local progress has stopped. Archive the best
                     # objective independently of the chosen lineage.
                     jump_chance=cfg.jump_probability
+                    if lineage.branch_kind=="historical" and self.generation<lineage.historical_protected_until:
+                        jump_chance=max(jump_chance,cfg.historical_jump_probability)
                     if lineage.stagnation>=cfg.stagnation_jump_threshold:
                         jump_chance=min(0.5,2*jump_chance)
                     if self.evaluations<cfg.evaluation_budget and self.rng.random()<jump_chance:
@@ -933,8 +955,12 @@ class Search:
                             explorer_proposals.append((trial,lineage,jump_operator))
                             self.step_stats["jump"]["accepted"]+=1
                     child=min(improvements,key=lambda c:c.score) if improvements else parent
-                    if (child is parent and alternate and self._explorer_active(lineage)
-                            and self.rng.random()<cfg.explorer_uphill_probability):
+                    if (child is parent and alternate and
+                            ((self._explorer_active(lineage) and
+                              self.rng.random()<cfg.explorer_uphill_probability)
+                             or (lineage.branch_kind=="historical" and
+                                 self.generation<lineage.historical_protected_until
+                                 and self.rng.random()<cfg.historical_uphill_probability))):
                         child=self.rng.choice(alternate)
                         self.explorer_stats["uphill_steps"]+=1
                     gain=max(0.,parent.score-child.score)
