@@ -21,6 +21,19 @@ class Settings:
     competition_generations: int = 200  # lineage trend memory horizon (legacy CLI flag)
     population_adjust_interval: int = 20
     history_depth: int = 120
+    adaptive_historical: bool = False
+    max_forward_branches: int = 5
+    max_historical_branches: int = 5
+    historical_lookback_min: int = 100
+    historical_lookback_max: int = 1500
+    historical_trial_generations: int = 300
+    historical_spawn_interval: int = 100
+    historical_archive_interval: int = 20
+    historical_archive_capacity: int = 320
+    historical_stall_windows: int = 2
+    historical_structural_weight: float = 0.5
+    historical_age_weight: float = 0.3
+    historical_quality_weight: float = 0.2
     progress_smoothing: float = 0.35
     low_progress_ratio: float = 0.25
     high_progress_ratio: float = 0.80
@@ -61,6 +74,24 @@ class Settings:
                     "population_adjust_interval", "history_depth"):
             if getattr(self, key) < 1:
                 raise ValueError(f"{key} must be positive")
+        if self.adaptive_historical:
+            for key in ("max_forward_branches","max_historical_branches",
+                        "historical_lookback_min","historical_lookback_max",
+                        "historical_trial_generations","historical_spawn_interval",
+                        "historical_archive_interval","historical_archive_capacity",
+                        "historical_stall_windows"):
+                if getattr(self,key)<1:
+                    raise ValueError(f"{key} must be positive")
+            if self.max_forward_branches+self.max_historical_branches>self.max_parents:
+                raise ValueError("forward + historical slots exceed max_parents")
+            if self.initial_parents>self.max_forward_branches:
+                raise ValueError("initial_parents exceeds forward slots")
+            if self.historical_lookback_max<self.historical_lookback_min:
+                raise ValueError("historical lookback maximum must exceed minimum")
+            weights=(self.historical_structural_weight,self.historical_age_weight,
+                     self.historical_quality_weight)
+            if any(not math.isfinite(w) or w<0 for w in weights) or sum(weights)<=0:
+                raise ValueError("Historical weights must be nonnegative and nonzero")
         if self.initial_parents>self.max_parents:
             raise ValueError("initial_parents cannot exceed max_parents")
         if not operators:
@@ -133,6 +164,10 @@ class Lineage:
     parent_lineage_id: int = 0
     explorer_credit_baseline: float = 0.0
     explorer_credited: bool = False
+    branch_kind: str = "forward"
+    historical_protected_until: int = 0
+    historical_start_score: float = 0.0
+    historical_birth_generation: int = 0
 
 
 @dataclass
@@ -193,7 +228,14 @@ class Search:
         self.checkpoint_step = 0
         self.checkpoint_score = float("inf")
         self.competition_end = None  # deprecated; retained for existing output readers
-        self.snapshots = []          # historical parent states, independent of geometry
+        self.snapshots = []          # recent historical parent states
+        self.historical_archive = []
+        self.historical_used_node_ids = set()
+        self.historical_last_spawn = -10**9
+        self.historical_weak_windows = 0
+        self.historical_stats = {"spawned":0,"promoted":0,"expired":0,
+                                 "rejected_duplicate":0,"insufficient_history":0}
+        self.historical_last_archive_generation = -1
         self.reference_gain = None   # adaptive local progress scale
         self.previous_goal_gap = None
         self.output = Path(self.cfg.output_dir)
