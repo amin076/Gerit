@@ -64,6 +64,46 @@ class GlobalRotationTests(unittest.TestCase):
         b=optimal_global_rotation(row(10))
         self.assertEqual(a,b)
 
+    def test_rotated_contact_grid_is_numerically_valid(self):
+        # Exact contacts are common in dense square packings. A rigid
+        # transformation cannot physically introduce overlap.
+        original=Packing(tuple(Square(x+.5,y+.5) for x in range(4) for y in range(4)),4.)
+        for angle in (0.01,0.1,0.31,0.74,1.21):
+            c,t=math.cos(angle),math.sin(angle)
+            rotated=tuple(Square(q.x*c-q.y*t,q.x*t+q.y*c,q.angle+angle)
+                          for q in original.squares)
+            from gerit.geometry import minimum_bounding_square
+            fitted=minimum_bounding_square(rotated)
+            self.assertTrue(validate_packing(fitted,tolerance=1e-10).valid)
+
+    def test_adapter_records_and_recovers_float_contact(self):
+        from examples.square_packing import UnitSquares
+        problem=UnitSquares(count=10)
+        problem.use_global_rotation=True
+        result=problem.canonicalize(row(10))
+        self.assertAlmostEqual(result.container_side,11/math.sqrt(2),places=8)
+        self.assertTrue(problem.feasible(result))
+        self.assertEqual(problem.rotation_rejected_genuine,0)
+
+    def test_invalid_overlapping_source_not_repaired(self):
+        from examples.square_packing import UnitSquares
+        original=Packing((Square(.5,.5),Square(.5,.5)),2.)
+        problem=UnitSquares(count=2)
+        problem.use_global_rotation=True
+        after=problem.canonicalize(original)
+        self.assertEqual(after,original)
+        self.assertEqual(problem.rotation_rejected_genuine,1)
+
+    def test_fifty_random_packing_optimizations_are_valid(self):
+        from examples.square_packing import UnitSquares
+        problem=UnitSquares(count=18,initial_side=12)
+        problem.use_global_rotation=True
+        for seed in range(50):
+            initial=problem.initial(random.Random(seed+700))
+            self.assertTrue(problem.feasible(initial))
+            self.assertEqual(len(initial.squares),18)
+        self.assertEqual(problem.rotation_rejected_genuine,0)
+
 
 if __name__ == "__main__":
     unittest.main()
