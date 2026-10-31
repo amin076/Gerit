@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing
+from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing, square_vertices
 from gerit.global_rotation import optimal_global_rotation
 from gerit.selection import packing_distance
 from gerit.local_compression import CompressionSettings, compress_valid
@@ -76,6 +76,9 @@ class UnitSquares:
         self.rotation_rejected_bounds=0
         self.rotation_recovered_roundoff=0
         self.rotation_rejected_genuine=0
+        self.rotation_boundary_excess_max=0.0
+        self.rotation_boundary_excess_sum=0.0
+        self.rotation_boundary_excess_examples=[]
 
     def canonicalize(self, state):
         if not self.use_global_rotation:
@@ -85,6 +88,19 @@ class UnitSquares:
         self.rotation_seconds+=time.perf_counter()-started
         self.rotation_calls+=1
         strict=validate_packing(result.packing,tolerance=0.0)
+        if strict.outside_indices:
+            # Report actual positive vertex excursion outside [0, L].
+            # This is a measurement, not an additional acceptance criterion.
+            L=result.packing.container_side
+            excess=max(max(0.,-x,x-L,-y,y-L)
+                       for index in strict.outside_indices
+                       for x,y in square_vertices(result.packing.squares[index]))
+            self.rotation_boundary_excess_max=max(self.rotation_boundary_excess_max,excess)
+            self.rotation_boundary_excess_sum+=excess
+            if len(self.rotation_boundary_excess_examples)<12:
+                self.rotation_boundary_excess_examples.append({
+                    "call":self.rotation_calls,"max_excess":excess,
+                    "outside_indices":list(strict.outside_indices)})
         if not strict.valid:
             # Record WHY strict validation fails. Rotation is a rigid isometry,
             # so genuine pairwise penetration cannot be introduced if the
@@ -409,6 +425,9 @@ def main():
                     "rejected_due_strict_geometry":problem.rotation_rejected,
                     "strict_overlap_flags":problem.rotation_rejected_overlap,
                     "strict_outside_flags":problem.rotation_rejected_bounds,
+                    "boundary_excess_max":problem.rotation_boundary_excess_max,
+                    "boundary_excess_mean_when_flagged":(problem.rotation_boundary_excess_sum / max(1,problem.rotation_rejected_bounds)),
+                    "boundary_excess_examples":problem.rotation_boundary_excess_examples,
                     "recovered_numerical_roundoff":problem.rotation_recovered_roundoff,
                     "rejected_after_numerical_check":problem.rotation_rejected_genuine,
                     "saved_side_sum":problem.rotation_saved_side,
