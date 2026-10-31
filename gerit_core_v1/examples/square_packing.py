@@ -383,7 +383,8 @@ def main():
                          rotation_attempts=args.rotation_attempts)
     recorder=PackingRecorder(cfg.output_dir, max(5.0,problem.warm_start.container_side+0.3) if args.initial_state else problem.initial_side,
                              video=args.video,fps=args.fps,
-                             width=args.image_width,frame_every=args.frame_every)
+                             width=args.image_width,frame_every=args.frame_every,
+                             validation_tolerance=(1e-10 if args.global_rotation else 0.0))
     operators={'scaled_pose':ops.scaled_pose,'micro':ops.micro,'contact':ops.contact,
                'restructure':ops.restructure,'rotate':ops.rotate,
                'compress':ops.compress}
