@@ -1,0 +1,28 @@
+name: Global rotation geometry validation
+on:
+  push:
+    branches:
+      - experiment/global-rotation-ablation
+  workflow_dispatch:
+jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gerit_core_v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+      - name: Exact rigid rotation tests
+        run: python -m unittest discover -s tests -p 'test_global_rotation.py' -v
+      - name: Random start paired smoke test, two generations
+        run: python -m examples.compare_global_rotation --generations 2 --seed 4540 --initial-side 12 --out results/global_rotation_ci
+      - name: Inspect comparison
+        run: |
+          python -c "import json; p=json.load(open('results/global_rotation_ci/comparison.json')); print(json.dumps(p,indent=2)); assert p['runs']['with_rotation']['rotation_calls'] > 0"
