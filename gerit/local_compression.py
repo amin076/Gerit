@@ -25,17 +25,18 @@ def _score(p: Packing) -> tuple[float,float]:
 
 def compress_valid(child: Packing, rng: Random,
                    settings: CompressionSettings = CompressionSettings(),
-                   side_cap: float = 3.0) -> tuple[Packing,dict]:
+                   side_cap: float = 3.0, *,
+                   validation_tolerance: float = 0.0) -> tuple[Packing,dict]:
     """Compress a child with strict full-packing checks; never accept worse L.
 
     Moves are candidate endpoint states, NOT collision-free physical trajectories.
     Equal-L changes are accepted only when width+height decreases.
     """
-    if not validate_packing(child,tolerance=0.0).valid:
+    if not validate_packing(child,tolerance=validation_tolerance).valid:
         raise ValueError("Compression input must be valid")
     current = child
     rebased = minimum_bounding_square(child.squares)
-    if validate_packing(rebased,tolerance=0.0).valid:
+    if validate_packing(rebased,tolerance=validation_tolerance).valid:
         current = rebased
     original_side = current.container_side
     accepted = 0
@@ -85,7 +86,7 @@ def compress_valid(child: Packing, rng: Random,
         checks += 1
         if proposed.container_side > min(side_cap,current.container_side)+settings.improvement_epsilon:
             continue
-        if not validate_packing(proposed,tolerance=0.0).valid:
+        if not validate_packing(proposed,tolerance=validation_tolerance).valid:
             continue
         old_score,new_score = _score(current),_score(proposed)
         if (new_score[0] < old_score[0]-settings.improvement_epsilon
@@ -94,9 +95,9 @@ def compress_valid(child: Packing, rng: Random,
             current = proposed
             accepted += 1
     # Safeguard floating-point contact configurations from repeated rebasing.
-    if not validate_packing(current,tolerance=0.0).valid:
+    if not validate_packing(current,tolerance=validation_tolerance).valid:
         current = child
-    assert validate_packing(current,tolerance=0.0).valid
+    assert validate_packing(current,tolerance=validation_tolerance).valid
     assert current.container_side<=original_side+settings.improvement_epsilon
     return current,{
         "compression_trials":checks,
