@@ -2,6 +2,12 @@
 import math
 import random
 import unittest
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from gerit.geometry import Packing, Square, square_vertices, validate_packing
 from gerit.global_rotation import optimal_global_rotation
