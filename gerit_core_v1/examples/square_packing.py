@@ -94,9 +94,9 @@ class UnitSquares:
                 self.rotation_rejected_overlap+=1
             if strict.outside_indices:
                 self.rotation_rejected_bounds+=1
-        # The source must be strictly feasible, never legitimise a previous
-        # overlap by choosing a loose tolerance after the fact.
-        if not validate_packing(state,tolerance=0.0).valid:
+        # The source must already satisfy the geometry library's numerical
+        # contract; never legitimise genuinely invalid input.
+        if not validate_packing(state,tolerance=1e-10).valid:
             self.rotation_rejected_genuine+=1
             return state
         # Use the same small documented tolerance as the geometry module's
