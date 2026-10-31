@@ -104,6 +104,28 @@ class GlobalRotationTests(unittest.TestCase):
             self.assertEqual(len(initial.squares),18)
         self.assertEqual(problem.rotation_rejected_genuine,0)
 
+    def test_renderer_uses_same_numerical_contract_as_rotation_adapter(self):
+        import tempfile
+        from examples.packing_visualization import PackingRecorder, render_packing
+        # A one-picometre boundary departure is rejected by the strict
+        # numerical test but accepted by the documented 1e-10 contract.
+        packing=Packing((Square(.5-1e-12,.5),),1.)
+        self.assertFalse(validate_packing(packing,tolerance=0.).valid)
+        self.assertTrue(validate_packing(packing,tolerance=1e-10).valid)
+        with tempfile.TemporaryDirectory() as folder:
+            image=Path(folder)/"sample.png"
+            with self.assertRaises(ValueError):
+                render_packing(image,packing,generation=0,
+                               initial_side=2,parents=1,evaluations=1,size=320)
+            render_packing(image,packing,generation=0,initial_side=2,
+                           parents=1,evaluations=1,size=320,
+                           validation_tolerance=1e-10)
+            self.assertTrue(image.exists())
+            recorder=PackingRecorder(folder,2,width=320,validation_tolerance=1e-10)
+            recorder(0,packing,0,1,1)
+            recorder.finish()
+            self.assertTrue((Path(folder)/"final_packing.png").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
