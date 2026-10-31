@@ -71,6 +71,7 @@ class UnitSquares:
         self.rotation_calls=0
         self.rotation_seconds=0.0
         self.rotation_saved_side=0.0
+        self.rotation_rejected=0
 
     def canonicalize(self, state):
         if not self.use_global_rotation:
@@ -79,6 +80,11 @@ class UnitSquares:
         result=optimal_global_rotation(state)
         self.rotation_seconds+=time.perf_counter()-started
         self.rotation_calls+=1
+        if not self.feasible(result.packing):
+            # Floating-point roundoff can perturb exact contacts under rotation.
+            # Never pass an invalid geometry to the generic search engine.
+            self.rotation_rejected+=1
+            return state
         self.rotation_saved_side+=max(0.,state.container_side-result.side_after)
         return result.packing
 
@@ -372,6 +378,7 @@ def main():
     rotation_stats={"enabled":bool(args.global_rotation),
                     "calls":problem.rotation_calls,
                     "seconds":problem.rotation_seconds,
+                    "rejected_due_strict_geometry":problem.rotation_rejected,
                     "saved_side_sum":problem.rotation_saved_side,
                     "search_seconds_including_rendering":search_seconds,
                     "generation":result.generations,
