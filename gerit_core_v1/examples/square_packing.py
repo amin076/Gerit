@@ -10,6 +10,8 @@ import argparse
 from dataclasses import fields
 import math
 import random
+import time
+import json
 from pathlib import Path
 import sys
 
@@ -19,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing
+from gerit.global_rotation import optimal_global_rotation
 from gerit.selection import packing_distance
 from gerit.local_compression import CompressionSettings, compress_valid
 from gerit.adaptive_v4 import propose_micro, propose_reconfigure
@@ -64,12 +67,26 @@ class UnitSquares:
         self.random_angles=bool(random_angles)
         self.placement_attempts=placement_attempts
         self.restart_attempts=restart_attempts
+        self.use_global_rotation=False
+        self.rotation_calls=0
+        self.rotation_seconds=0.0
+        self.rotation_saved_side=0.0
+
+    def canonicalize(self, state):
+        if not self.use_global_rotation:
+            return state
+        started=time.perf_counter()
+        result=optimal_global_rotation(state)
+        self.rotation_seconds+=time.perf_counter()-started
+        self.rotation_calls+=1
+        self.rotation_saved_side+=max(0.,state.container_side-result.side_after)
+        return result.packing
 
     objective_lower_bound = 0.0  # unused area cannot be negative (certified lower bound)
 
     def initial(self, rng):
         if hasattr(self,"warm_start"):
-            return self.warm_start
+            return self.canonicalize(self.warm_start)
 
         """Start from feasible random positions and orientations, NOT a grid.
 
@@ -90,7 +107,7 @@ class UnitSquares:
             packing=Packing(squares,side)
             if not self.feasible(packing):
                 raise ValueError("Grid initial packing is invalid")
-            return packing
+            return self.canonicalize(packing)
 
         for _ in range(self.restart_attempts):
             placed=[]
@@ -124,7 +141,7 @@ class UnitSquares:
             if len(placed)==self.count:
                 packing=Packing(tuple(placed),side)
                 if self.feasible(packing):
-                    return packing
+                    return self.canonicalize(packing)
         raise RuntimeError(
             f"Could not place {self.count} random squares within L={side}; "
             "increase --initial-side, lower --initial-min-center-distance "
@@ -278,6 +295,8 @@ def main():
     parser.add_argument("--initial-restarts",type=int,default=200)
     parser.add_argument("--initial-state",type=str,default=None,
                         help="path to prior best.json; load its full geometry, not a random start")
+    parser.add_argument("--global-rotation",action="store_true",
+                        help="Canonicalize every candidate by optimal rigid global rotation")
     parser.add_argument("--operator-set",choices=("legacy-hybrid","basic"),default="legacy-hybrid")
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
@@ -300,6 +319,7 @@ def main():
                           random_angles=(args.initial_angle_mode=="random"),
                           placement_attempts=args.initial_placement_attempts,
                           restart_attempts=args.initial_restarts)
+    problem.use_global_rotation=args.global_rotation
     if args.render_lineage_only:
         import json
         final_path=Path(cfg.output_dir)/"best.json"
@@ -342,7 +362,24 @@ def main():
     if args.operator_set=="legacy-hybrid":
         operators['learned']=ops.learned
     print('GEOMETRY_OPERATORS',list(operators),flush=True)
+    if args.global_rotation:
+        operators={name:(lambda parent,rng,intensity,fn=fn:
+                   problem.canonicalize(fn(parent,rng,intensity)))
+                   for name,fn in operators.items()}
+    search_started=time.perf_counter()
     result=Search(problem,operators,cfg,on_generation=recorder).run()
+    search_seconds=time.perf_counter()-search_started
+    rotation_stats={"enabled":bool(args.global_rotation),
+                    "calls":problem.rotation_calls,
+                    "seconds":problem.rotation_seconds,
+                    "saved_side_sum":problem.rotation_saved_side,
+                    "search_seconds_including_rendering":search_seconds,
+                    "generation":result.generations,
+                    "evaluations":result.evaluations,
+                    "best_side":result.best_state.container_side}
+    (Path(cfg.output_dir)/"global_rotation_stats.json").write_text(
+        json.dumps(rotation_stats,indent=2),encoding="utf8")
+    print("GLOBAL_ROTATION_STATS",rotation_stats,flush=True)
     recorder.finish()
     if args.lineage_video:
         render_best_ancestry_video(cfg.output_dir,problem,fps=args.fps,
