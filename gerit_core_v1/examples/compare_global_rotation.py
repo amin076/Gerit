@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from gerit.geometry import validate_packing
+from gerit.geometry import validate_packing, minimum_bounding_square
 from examples.square_packing import UnitSquares
 
 
@@ -34,7 +34,10 @@ def main():
                         initial_mode="random",random_angles=True,
                         min_center_distance=2.0,placement_attempts=2000,
                         restart_attempts=200)
-    initial=problem.initial(random.Random(args.seed))
+    sampled=problem.initial(random.Random(args.seed))
+    # Remove empty external margin for BOTH arms without rotating anything.
+    # Otherwise the ON arm would receive an unfair free translation/shrink.
+    initial=minimum_bounding_square(sampled.squares)
     assert validate_packing(initial,tolerance=0.).valid
     assert len(initial.squares)==18
     assert any(abs(s.angle)>1e-6 for s in initial.squares)
@@ -43,7 +46,9 @@ def main():
         "purpose":"new independent random initial state shared by both arms",
         "square_count":18,"seed":args.seed,"initial_side":args.initial_side,
         "initial_mode":"random","initial_angle_mode":"random",
-        "initial_min_center_distance":2.0}}
+        "initial_min_center_distance":2.0,
+        "sampled_container_side":sampled.container_side,
+        "tight_container_side_before_any_rotation":initial.container_side}}
     encoded=json.dumps(state,sort_keys=True,indent=2).encode("utf8")
     initial_path=root/"random_generation_zero.json"
     initial_path.write_bytes(encoded)
