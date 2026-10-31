@@ -206,9 +206,11 @@ TwelveSquares = UnitSquares
 
 class PackingOperators:
     """Reuses the older Gerit geometric operators as swappable domain actions."""
-    def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12):
+    def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12,
+                 validation_tolerance=0.0):
         if cap_margin < 0 or compression_attempts < 0 or rotation_attempts < 1:
             raise ValueError("cap-margin and compression-attempts must be nonnegative")
+        self.validation_tolerance=validation_tolerance
         self.learn_controller=LearningController()
         self.learn_policy=self.learn_controller.new_policy()
         self.learned_calls=0
@@ -225,7 +227,8 @@ class PackingOperators:
             return parent
         if self.compression_attempts:
             packed,_=compress_valid(raw,rng,self.compressor,
-                                    side_cap=parent.container_side+self.cap_margin)
+                                    side_cap=parent.container_side+self.cap_margin,
+                                    validation_tolerance=self.validation_tolerance)
             return packed
         return raw
 
@@ -298,7 +301,8 @@ class PackingOperators:
         # Direct local search, including single-square and coordinated motions.
         settings=CompressionSettings(attempts_per_child=max(1,self.compression_attempts*2))
         packed,_=compress_valid(parent,rng,settings,
-                                side_cap=parent.container_side+self.cap_margin)
+                                side_cap=parent.container_side+self.cap_margin,
+                                validation_tolerance=self.validation_tolerance)
         return packed
 
 
@@ -380,7 +384,8 @@ def main():
         "restarts":args.initial_restarts},flush=True)
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts,
-                         rotation_attempts=args.rotation_attempts)
+                         rotation_attempts=args.rotation_attempts,
+                         validation_tolerance=(1e-10 if args.global_rotation else 0.0))
     recorder=PackingRecorder(cfg.output_dir, max(5.0,problem.warm_start.container_side+0.3) if args.initial_state else problem.initial_side,
                              video=args.video,fps=args.fps,
                              width=args.image_width,frame_every=args.frame_every,
