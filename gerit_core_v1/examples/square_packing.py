@@ -327,7 +327,6 @@ def main():
                           restart_attempts=args.initial_restarts)
     problem.use_global_rotation=args.global_rotation
     if args.render_lineage_only:
-        import json
         final_path=Path(cfg.output_dir)/"best.json"
         best=json.loads(final_path.read_text(encoding="utf8"))
         final_state=problem.decode(best["state"])
