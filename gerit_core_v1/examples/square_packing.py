@@ -186,7 +186,7 @@ class UnitSquares:
 
     def feasible(self, state):
         return (isinstance(state,Packing) and len(state.squares)==self.count
-                and validate_packing(state,tolerance=1e-10).valid)
+                and validate_packing(state,tolerance=(1e-10 if self.use_global_rotation else 0.0)).valid)
 
     def distance(self,a,b):
         return packing_distance(a,b)
