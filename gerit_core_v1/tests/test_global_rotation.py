@@ -126,6 +126,36 @@ class GlobalRotationTests(unittest.TestCase):
             recorder.finish()
             self.assertTrue((Path(folder)/"final_packing.png").exists())
 
+    def test_compression_accepts_numerically_valid_rotated_parent(self):
+        from gerit.local_compression import compress_valid, CompressionSettings
+        # Reproduce the previous run crash: strict SAT rejects a tiny boundary
+        # discrepancy while the rotation adapter's 1e-10 contract accepts it.
+        packing=Packing((Square(.5-1e-12,.5),),1.)
+        self.assertFalse(validate_packing(packing,tolerance=0.).valid)
+        self.assertTrue(validate_packing(packing,tolerance=1e-10).valid)
+        with self.assertRaises(ValueError):
+            compress_valid(packing,random.Random(5),
+                           CompressionSettings(attempts_per_child=1),
+                           side_cap=2.)
+        out,_=compress_valid(packing,random.Random(5),
+                            CompressionSettings(attempts_per_child=1),
+                            side_cap=2.,validation_tolerance=1e-10)
+        self.assertTrue(validate_packing(out,tolerance=1e-10).valid)
+
+    def test_global_rotation_feeds_compressor_without_crashing(self):
+        from examples.square_packing import UnitSquares, PackingOperators
+        problem=UnitSquares(count=18,initial_side=12)
+        problem.use_global_rotation=True
+        ops=PackingOperators(validation_tolerance=1e-10)
+        for seed in range(10):
+            rng=random.Random(3000+seed)
+            initial=problem.initial(rng)
+            for _ in range(5):
+                child=ops.compress(initial,rng,1.)
+                self.assertTrue(problem.feasible(child))
+                initial=problem.canonicalize(child)
+                self.assertTrue(problem.feasible(initial))
+
 
 if __name__ == "__main__":
     unittest.main()
