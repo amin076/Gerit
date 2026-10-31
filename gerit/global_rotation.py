@@ -99,12 +99,12 @@ def optimal_global_rotation(packing: Packing) -> RotationResult:
         # Width = A*cos(t)+B*sin(t), Height = C*cos(t)+D*sin(t).
         A, B = xr - xl, -(yr - yl)
         C, D = yt - yb, xt - xb
-        for u, v in ((A, B), (C, D), (A - C, B - D)):
+        for kind, u, v in ((0, A, B), (0, C, D), (1, A - C, B - D)):
             if abs(u) + abs(v) < 1e-14:
                 continue
             # Derivative zero: -u*sin(t) + v*cos(t) = 0.
             # Equality zero: u*cos(t) + v*sin(t) = 0.
-            base = atan2(v, u) if (u, v) != (A - C, B - D) else atan2(-u, v)
+            base = atan2(v, u) if kind == 0 else atan2(-u, v)
             for k in range(-2, 4):
                 theta = base + k * pi
                 if lo < theta < hi:
