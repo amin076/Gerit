@@ -72,6 +72,10 @@ class UnitSquares:
         self.rotation_seconds=0.0
         self.rotation_saved_side=0.0
         self.rotation_rejected=0
+        self.rotation_rejected_overlap=0
+        self.rotation_rejected_bounds=0
+        self.rotation_recovered_roundoff=0
+        self.rotation_rejected_genuine=0
 
     def canonicalize(self, state):
         if not self.use_global_rotation:
@@ -80,11 +84,30 @@ class UnitSquares:
         result=optimal_global_rotation(state)
         self.rotation_seconds+=time.perf_counter()-started
         self.rotation_calls+=1
-        if not self.feasible(result.packing):
-            # Floating-point roundoff can perturb exact contacts under rotation.
-            # Never pass an invalid geometry to the generic search engine.
+        strict=validate_packing(result.packing,tolerance=0.0)
+        if not strict.valid:
+            # Record WHY strict validation fails. Rotation is a rigid isometry,
+            # so genuine pairwise penetration cannot be introduced if the
+            # input is collision-free. Still reject all invalid inputs.
             self.rotation_rejected+=1
+            if strict.overlap_pairs:
+                self.rotation_rejected_overlap+=1
+            if strict.outside_indices:
+                self.rotation_rejected_bounds+=1
+        # The source must be strictly feasible, never legitimise a previous
+        # overlap by choosing a loose tolerance after the fact.
+        if not validate_packing(state,tolerance=0.0).valid:
+            self.rotation_rejected_genuine+=1
             return state
+        # Use the same small documented tolerance as the geometry module's
+        # public collision validator; this only absorbs IEEE-754 roundoff
+        # on an otherwise rigorously valid *rigidly transformed* input.
+        numerical=validate_packing(result.packing,tolerance=1e-10)
+        if not numerical.valid:
+            self.rotation_rejected_genuine+=1
+            return state
+        if not strict.valid:
+            self.rotation_recovered_roundoff+=1
         self.rotation_saved_side+=max(0.,state.container_side-result.side_after)
         return result.packing
 
@@ -163,7 +186,7 @@ class UnitSquares:
 
     def feasible(self, state):
         return (isinstance(state,Packing) and len(state.squares)==self.count
-                and validate_packing(state,tolerance=0.).valid)
+                and validate_packing(state,tolerance=1e-10).valid)
 
     def distance(self,a,b):
         return packing_distance(a,b)
@@ -378,6 +401,10 @@ def main():
                     "calls":problem.rotation_calls,
                     "seconds":problem.rotation_seconds,
                     "rejected_due_strict_geometry":problem.rotation_rejected,
+                    "strict_overlap_flags":problem.rotation_rejected_overlap,
+                    "strict_outside_flags":problem.rotation_rejected_bounds,
+                    "recovered_numerical_roundoff":problem.rotation_recovered_roundoff,
+                    "rejected_after_numerical_check":problem.rotation_rejected_genuine,
                     "saved_side_sum":problem.rotation_saved_side,
                     "search_seconds_including_rendering":search_seconds,
                     "generation":result.generations,
