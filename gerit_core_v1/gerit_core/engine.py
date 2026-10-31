@@ -460,17 +460,15 @@ class Search:
         memory=self.operator_memory[name]
         memory["attempts"]+=1
         memory["successes"]+=int(improved)
-        # Relative magnitude makes the reward unitless; measured operator
-        # runtime penalizes expensive actions, using an observed global
-        # reference rather than any problem-specific conversion factor.
-        total_seconds=sum(v["seconds"] for v in self.operator_stats.values())
-        total_calls=sum(v["calls"] for v in self.operator_stats.values())
-        reference_seconds=max(1e-8,total_seconds/max(1,total_calls))
+        # Adaptive selection must not depend on wall-clock measurements:
+        # otherwise identical seeds and inputs take different search paths
+        # depending on CPU scheduling, GC and filesystem load. Timing is
+        # still collected in operator_stats for performance diagnostics.
         utility=0.0
         if improved:
             gain=(parent.score-child.score)/max(1.,abs(parent.score))
             quality=min(1.,0.10+self.cfg.utility_gain_scale*gain)
-            utility=quality/(1.+elapsed/reference_seconds)
+            utility=quality
         memory["utility_sum"]+=utility
         memory["recent_utilities"].append(utility)
         del memory["recent_utilities"][:-self.cfg.recent_learning_window]

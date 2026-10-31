@@ -18,9 +18,9 @@ COLORS = ("#82b4dd","#85c7a1","#f1b96d","#b79cde","#dc8d9f",
 
 
 def render_packing(path, packing, *, generation, initial_side, parents, evaluations,
-                   size=900):
+                   size=900, validation_tolerance=0.0):
     """Draw a valid unit-square configuration at a fixed camera scale."""
-    if not validate_packing(packing,tolerance=0.).valid:
+    if not validate_packing(packing,tolerance=validation_tolerance).valid:
         raise ValueError("Refusing to render invalid packing")
     path=Path(path)
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -48,7 +48,7 @@ def render_packing(path, packing, *, generation, initial_side, parents, evaluati
 
 class PackingRecorder:
     def __init__(self, output, initial_side, *, video=False, fps=30, width=900,
-                 frame_every=1):
+                 frame_every=1, validation_tolerance=0.0):
         if fps<1 or width<320 or frame_every<1:
             raise ValueError("fps>=1, image-width>=320, frame-every>=1 are required")
         if video and shutil.which("ffmpeg") is None:
@@ -59,6 +59,7 @@ class PackingRecorder:
         self.fps=fps
         self.width=width
         self.frame_every=frame_every
+        self.validation_tolerance=validation_tolerance
         self.frames=self.output/"frames"
         self.frame_count=0
         self.last_generation=None
@@ -78,13 +79,15 @@ class PackingRecorder:
         target=self.output/"latest_packing.png"
         temporary=self.output/"latest_packing.tmp.png"
         render_packing(temporary,state,generation=generation,initial_side=self.initial_side,
-                       parents=parents,evaluations=evaluations,size=self.width)
+                       parents=parents,evaluations=evaluations,size=self.width,
+                       validation_tolerance=self.validation_tolerance)
         temporary.replace(target)
         if self.video and generation>0 and generation%self.frame_every==0:
             self.frame_count+=1
             render_packing(self.frames/f"frame_{self.frame_count:06d}.png",state,
                  generation=generation,initial_side=self.initial_side,
-                 parents=parents,evaluations=evaluations,size=self.width)
+                 parents=parents,evaluations=evaluations,size=self.width,
+                 validation_tolerance=self.validation_tolerance)
 
     def finish(self):
         if self.last_packing is None:
@@ -92,7 +95,7 @@ class PackingRecorder:
         render_packing(self.output/"final_packing.png",self.last_packing,
                        generation=self.last_generation,initial_side=self.initial_side,
                        parents=self.last_parents,evaluations=self.last_evaluations,
-                       size=self.width)
+                       size=self.width,validation_tolerance=self.validation_tolerance)
         if not self.video or not self.frame_count:
             return
         cmd=["ffmpeg","-hide_banner","-loglevel","error","-y","-framerate",
@@ -168,7 +171,8 @@ def render_best_ancestry_video(output, problem, *, fps=30, width=900,
         packing=problem.decode(node["state"])
         render_packing(frames/f"frame_{index:06d}.png",packing,
                        generation=node["generation"],initial_side=camera_side,
-                       parents=1,evaluations=node["evaluation"],size=width)
+                       parents=1,evaluations=node["evaluation"],size=width,
+                       validation_tolerance=(1e-10 if problem.use_global_rotation else 0.0))
     video=output/"best_ancestry.mp4"
     cmd=["ffmpeg","-hide_banner","-loglevel","error","-y",
          "-framerate",str(fps),"-start_number","1","-i",
