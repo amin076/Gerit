@@ -23,6 +23,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_global_rotation.py' -v
       - name: Random start paired smoke test, 20 generations
         run: python -m examples.compare_global_rotation --generations 20 --seed 4540 --initial-side 12 --out results/global_rotation_ci
+      - name: Verify deterministic repeat from identical seed and start
+        run: python -m examples.audit_rotation_reproducibility --seed 4540 --generations 20 --out results/replay_ci
       - name: Inspect comparison
         run: |
           python -c "import json; p=json.load(open('results/global_rotation_ci/comparison.json')); print(json.dumps(p,indent=2)); assert p['runs']['with_rotation']['rotation_calls'] > 0"
