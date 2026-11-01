@@ -10,6 +10,8 @@ import argparse
 from dataclasses import fields
 import math
 import random
+import time
+import json
 from pathlib import Path
 import sys
 
@@ -18,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing
+from gerit.geometry import Packing, Square, minimum_bounding_square, validate_packing, square_vertices, squares_overlap
+from gerit.global_rotation import optimal_global_rotation
 from gerit.selection import packing_distance
 from gerit.local_compression import CompressionSettings, compress_valid
 from gerit.adaptive_v4 import propose_micro, propose_reconfigure
@@ -64,12 +67,71 @@ class UnitSquares:
         self.random_angles=bool(random_angles)
         self.placement_attempts=placement_attempts
         self.restart_attempts=restart_attempts
+        self.use_global_rotation=False
+        self.rotation_calls=0
+        self.rotation_seconds=0.0
+        self.rotation_saved_side=0.0
+        self.rotation_rejected=0
+        self.rotation_rejected_overlap=0
+        self.rotation_rejected_bounds=0
+        self.rotation_recovered_roundoff=0
+        self.rotation_rejected_genuine=0
+        self.rotation_boundary_excess_max=0.0
+        self.rotation_boundary_excess_sum=0.0
+        self.rotation_boundary_excess_examples=[]
+
+    def canonicalize(self, state):
+        if not self.use_global_rotation:
+            return state
+        started=time.perf_counter()
+        result=optimal_global_rotation(state)
+        self.rotation_seconds+=time.perf_counter()-started
+        self.rotation_calls+=1
+        strict=validate_packing(result.packing,tolerance=0.0)
+        if strict.outside_indices:
+            # Report actual positive vertex excursion outside [0, L].
+            # This is a measurement, not an additional acceptance criterion.
+            L=result.packing.container_side
+            excess=max(max(0.,-x,x-L,-y,y-L)
+                       for index in strict.outside_indices
+                       for x,y in square_vertices(result.packing.squares[index]))
+            self.rotation_boundary_excess_max=max(self.rotation_boundary_excess_max,excess)
+            self.rotation_boundary_excess_sum+=excess
+            if len(self.rotation_boundary_excess_examples)<12:
+                self.rotation_boundary_excess_examples.append({
+                    "call":self.rotation_calls,"max_excess":excess,
+                    "outside_indices":list(strict.outside_indices)})
+        if not strict.valid:
+            # Record WHY strict validation fails. Rotation is a rigid isometry,
+            # so genuine pairwise penetration cannot be introduced if the
+            # input is collision-free. Still reject all invalid inputs.
+            self.rotation_rejected+=1
+            if strict.overlap_pairs:
+                self.rotation_rejected_overlap+=1
+            if strict.outside_indices:
+                self.rotation_rejected_bounds+=1
+        # The source must already satisfy the geometry library's numerical
+        # contract; never legitimise genuinely invalid input.
+        if not validate_packing(state,tolerance=1e-10).valid:
+            self.rotation_rejected_genuine+=1
+            return state
+        # Use the same small documented tolerance as the geometry module's
+        # public collision validator; this only absorbs IEEE-754 roundoff
+        # on an otherwise rigorously valid *rigidly transformed* input.
+        numerical=validate_packing(result.packing,tolerance=1e-10)
+        if not numerical.valid:
+            self.rotation_rejected_genuine+=1
+            return state
+        if not strict.valid:
+            self.rotation_recovered_roundoff+=1
+        self.rotation_saved_side+=max(0.,state.container_side-result.side_after)
+        return result.packing
 
     objective_lower_bound = 0.0  # unused area cannot be negative (certified lower bound)
 
     def initial(self, rng):
         if hasattr(self,"warm_start"):
-            return self.warm_start
+            return self.canonicalize(self.warm_start)
 
         """Start from feasible random positions and orientations, NOT a grid.
 
@@ -90,7 +152,7 @@ class UnitSquares:
             packing=Packing(squares,side)
             if not self.feasible(packing):
                 raise ValueError("Grid initial packing is invalid")
-            return packing
+            return self.canonicalize(packing)
 
         for _ in range(self.restart_attempts):
             placed=[]
@@ -124,7 +186,7 @@ class UnitSquares:
             if len(placed)==self.count:
                 packing=Packing(tuple(placed),side)
                 if self.feasible(packing):
-                    return packing
+                    return self.canonicalize(packing)
         raise RuntimeError(
             f"Could not place {self.count} random squares within L={side}; "
             "increase --initial-side, lower --initial-min-center-distance "
@@ -140,7 +202,7 @@ class UnitSquares:
 
     def feasible(self, state):
         return (isinstance(state,Packing) and len(state.squares)==self.count
-                and validate_packing(state,tolerance=0.).valid)
+                and validate_packing(state,tolerance=(1e-10 if self.use_global_rotation else 0.0)).valid)
 
     def distance(self,a,b):
         return packing_distance(a,b)
@@ -158,11 +220,183 @@ class UnitSquares:
 TwelveSquares = UnitSquares
 
 
+
+class GeometricReasoner:
+    """Budgeted, domain-specific empty-space relocation and two-step lookahead.
+
+    This is a geometry-based proposal generator, not an image classifier.
+    All placements are checked using exact-coordinate SAT with numerical
+    roundoff tolerance. No benchmark arrangement is injected.
+    """
+    def __init__(self, probe_budget=48):
+        if probe_budget < 4:
+            raise ValueError("geometry-probes must be at least 4")
+        self.probe_budget=probe_budget
+        self.calls=0
+        self.probes=0
+        self.valid_probes=0
+        self.improved=0
+        self.two_step_improved=0
+        self.cavity_candidates=0
+        self.boundary_candidates=0
+        self.contact_candidates=0
+        self.last_plan=[]
+
+    @staticmethod
+    def _half(square, angle=None):
+        a=square.angle if angle is None else angle
+        h=.5*(abs(math.cos(a))+abs(math.sin(a)))
+        return h
+
+    @staticmethod
+    def _boundary_priority(square, side):
+        h=GeometricReasoner._half(square)
+        return max(0., .12-min(square.x-h,square.y-h,side-square.x-h,side-square.y-h))
+
+    @staticmethod
+    def _contacts(candidate, others):
+        x,y=candidate.x,candidate.y
+        h=GeometricReasoner._half(candidate)
+        contacts=0
+        for p in others:
+            hp=GeometricReasoner._half(p)
+            dx=abs(x-p.x);dy=abs(y-p.y)
+            if (abs(dx-h-hp)<.04 and dy<h+hp+.05) or (
+                    abs(dy-h-hp)<.04 and dx<h+hp+.05):
+                contacts+=1
+        return contacts
+
+    def _one_move(self, state, index, rng, limit, budget):
+        original=state.squares[index]
+        fixed=[sq for j,sq in enumerate(state.squares) if j!=index]
+        # Discrete candidate orientations and contact sites approximate
+        # the free configuration space, without pixel grids or trained data.
+        anchors=sorted(fixed,key=lambda q: ((q.x-original.x)**2+
+                                            (q.y-original.y)**2))
+        anchors=anchors[:min(8,len(anchors))]
+        angles=[original.angle,0.]
+        angles += [q.angle for q in anchors[:3]]
+        if rng.random()<.5:
+            rng.shuffle(angles)
+        # Remove nearly equivalent orientations modulo the square's symmetry.
+        unique=[]
+        for angle in angles:
+            if all(abs((angle-v+math.pi/4)%(math.pi/2)-math.pi/4)>1e-4
+                   for v in unique):
+                unique.append(angle)
+        candidates=[]
+        for a in unique:
+            h=self._half(original,a)
+            positions=[(h+1e-8,h+1e-8,"boundary"),
+                       (limit-h-1e-8,h+1e-8,"boundary"),
+                       (h+1e-8,limit-h-1e-8,"boundary"),
+                       (limit-h-1e-8,limit-h-1e-8,"boundary")]
+            # Contact line intersections are candidate cavity positions;
+            # every endpoint is then checked against ALL fixed squares.
+            xs=[h+1e-8,limit-h-1e-8]
+            ys=[h+1e-8,limit-h-1e-8]
+            for q in anchors:
+                hq=self._half(q)
+                gap=h+hq+1e-7
+                xs.extend([q.x-gap,q.x+gap])
+                ys.extend([q.y-gap,q.y+gap])
+                for dx,dy in ((-gap,0),(gap,0),(0,-gap),(0,gap)):
+                    positions.append((q.x+dx,q.y+dy,"contact"))
+            # Intersections of contact supports target cavity corners.
+            # Randomized order prevents systematic first-corner bias.
+            for _ in range(max(4,budget//max(1,len(unique)))):
+                positions.append((rng.choice(xs),rng.choice(ys),"cavity"))
+            rng.shuffle(positions)
+            candidates.extend((x,y,a,kind) for x,y,kind in positions)
+        rng.shuffle(candidates)
+        winner=None
+        winner_key=None
+        tried=0
+        for x,y,angle,kind in candidates:
+            if tried>=budget:
+                break
+            h=self._half(original,angle)
+            if min(x-h,y-h)<-1e-10 or max(x+h,y+h)>limit+1e-10:
+                continue
+            tried+=1
+            self.probes+=1
+            q=Square(x,y,angle)
+            if any(squares_overlap(q,other,tolerance=1e-10) for other in fixed):
+                continue
+            vals=list(state.squares);vals[index]=q
+            candidate=minimum_bounding_square(tuple(vals))
+            if candidate.container_side>limit+1e-9:
+                continue
+            if not validate_packing(candidate,tolerance=1e-10).valid:
+                continue
+            self.valid_probes+=1
+            if kind=="cavity":self.cavity_candidates+=1
+            elif kind=="boundary":self.boundary_candidates+=1
+            else:self.contact_candidates+=1
+            contact_bonus=self._contacts(q,fixed)
+            # First favor smaller envelopes. At equal side, favor tighter
+            # contacts to select a useful intermediate step.
+            key=(candidate.container_side-0.0001*contact_bonus,
+                 abs(x-original.x)+abs(y-original.y))
+            if winner_key is None or key<winner_key:
+                winner=candidate
+                winner_key=key
+        return winner
+
+    def propose(self,parent,rng,intensity=1.):
+        self.calls+=1
+        limit=parent.container_side+.15
+        ranks=sorted(range(len(parent.squares)),
+                     key=lambda i:self._boundary_priority(parent.squares[i],
+                                                           parent.container_side),
+                     reverse=True)
+        # Boundary squares are promising, but occasional internal moves
+        # permit clearing an obstacle before a second placement.
+        pool=ranks[:max(3,min(8,len(ranks)))]
+        first=rng.choice(pool)
+        available=self.probe_budget
+        # Two-step plan is allowed to have a temporarily worse intermediate
+        # state, but the returned child never has a worse final envelope.
+        stage=self._one_move(parent,first,rng,limit,available//2)
+        best=parent
+        plan=[]
+        if stage is not None:
+            if stage.container_side<best.container_side-1e-10:
+                best=stage
+                plan=[first]
+            others=[j for j in ranks if j!=first]
+            if others:
+                second=rng.choice(others[:min(8,len(others))])
+                after=self._one_move(stage,second,rng,limit,available-available//2)
+                if after is not None and after.container_side<best.container_side-1e-10:
+                    best=after
+                    plan=[first,second]
+        if best is not parent:
+            if not validate_packing(best,tolerance=1e-10).valid:
+                raise AssertionError("Geometric reasoner emitted invalid packing")
+            self.improved+=1
+            if len(plan)==2:self.two_step_improved+=1
+        self.last_plan=plan
+        return best
+
+    def snapshot(self):
+        return {"calls":self.calls,"probes":self.probes,
+                "valid_probes":self.valid_probes,"improved":self.improved,
+                "two_step_improved":self.two_step_improved,
+                "cavity_candidates":self.cavity_candidates,
+                "boundary_candidates":self.boundary_candidates,
+                "contact_candidates":self.contact_candidates,
+                "last_plan":self.last_plan}
+
+
 class PackingOperators:
     """Reuses the older Gerit geometric operators as swappable domain actions."""
-    def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12):
+    def __init__(self, *, cap_margin=.15, compression_attempts=8, rotation_attempts=12,
+                 validation_tolerance=0.0, geometric_probes=48):
+        self.reasoner=GeometricReasoner(geometric_probes)
         if cap_margin < 0 or compression_attempts < 0 or rotation_attempts < 1:
             raise ValueError("cap-margin and compression-attempts must be nonnegative")
+        self.validation_tolerance=validation_tolerance
         self.learn_controller=LearningController()
         self.learn_policy=self.learn_controller.new_policy()
         self.learned_calls=0
@@ -179,7 +413,8 @@ class PackingOperators:
             return parent
         if self.compression_attempts:
             packed,_=compress_valid(raw,rng,self.compressor,
-                                    side_cap=parent.container_side+self.cap_margin)
+                                    side_cap=parent.container_side+self.cap_margin,
+                                    validation_tolerance=self.validation_tolerance)
             return packed
         return raw
 
@@ -203,6 +438,9 @@ class PackingOperators:
         if valid and final.container_side < parent.container_side:
             self.learned_improved+=1
         return final
+
+    def geometric_reasoning(self,parent,rng,intensity):
+        return self._finish(parent,self.reasoner.propose(parent,rng,intensity),rng)
 
     def scaled_pose(self,parent,rng,intensity):
         """Intensity-aware domain move; the generic engine never sees x/y/angle."""
@@ -252,7 +490,8 @@ class PackingOperators:
         # Direct local search, including single-square and coordinated motions.
         settings=CompressionSettings(attempts_per_child=max(1,self.compression_attempts*2))
         packed,_=compress_valid(parent,rng,settings,
-                                side_cap=parent.container_side+self.cap_margin)
+                                side_cap=parent.container_side+self.cap_margin,
+                                validation_tolerance=self.validation_tolerance)
         return packed
 
 
@@ -278,6 +517,14 @@ def main():
     parser.add_argument("--initial-restarts",type=int,default=200)
     parser.add_argument("--initial-state",type=str,default=None,
                         help="path to prior best.json; load its full geometry, not a random start")
+    parser.add_argument("--geometric-reasoning",action="store_true",
+                        help="Enable budgeted vacancy/contact analysis and two-step placement")
+    parser.add_argument("--geometry-probes",type=int,default=48,
+                        help="Maximum geometric probes per reasoning operator call")
+    parser.add_argument("--geometry-self-test",action="store_true",
+                        help="Run a fast geometry invariants smoke test, then exit")
+    parser.add_argument("--global-rotation",action="store_true",
+                        help="Canonicalize every candidate by optimal rigid global rotation")
     parser.add_argument("--operator-set",choices=("legacy-hybrid","basic"),default="legacy-hybrid")
     parser.add_argument("--cap-margin",type=float,default=.15)
     parser.add_argument("--compression-attempts",type=int,default=8)
@@ -291,6 +538,21 @@ def main():
     parser.add_argument("--image-width",type=int,default=900)
     parser.add_argument("--frame-every",type=int,default=1,help="Capture one frame every N generations")
     args=parser.parse_args()
+    if args.geometry_self_test:
+        from gerit.geometry import grid_baseline
+        test=GeometricReasoner(probe_budget=args.geometry_probes)
+        for count in (10,12,18):
+            source=grid_baseline(count)
+            for seed in range(3):
+                child=test.propose(source,random.Random(seed+count))
+                if len(child.squares)!=count:
+                    raise AssertionError("Square count changed")
+                if not validate_packing(child,tolerance=1e-10).valid:
+                    raise AssertionError("Invalid geometric proposal")
+                if child.container_side>source.container_side+1e-9:
+                    raise AssertionError("Geometry increased containing side")
+        print("GEOMETRY_SELF_TEST_PASSED",test.snapshot(),flush=True)
+        return
     if args.maximize:
         parser.error("square packing minimizes container side: do not use --maximize")
     cfg=Settings(**{field.name:getattr(args,field.name) for field in fields(Settings)})
@@ -300,8 +562,8 @@ def main():
                           random_angles=(args.initial_angle_mode=="random"),
                           placement_attempts=args.initial_placement_attempts,
                           restart_attempts=args.initial_restarts)
+    problem.use_global_rotation=args.global_rotation
     if args.render_lineage_only:
-        import json
         final_path=Path(cfg.output_dir)/"best.json"
         best=json.loads(final_path.read_text(encoding="utf8"))
         final_state=problem.decode(best["state"])
@@ -332,17 +594,47 @@ def main():
         "restarts":args.initial_restarts},flush=True)
     ops=PackingOperators(cap_margin=args.cap_margin,
                          compression_attempts=args.compression_attempts,
-                         rotation_attempts=args.rotation_attempts)
+                         rotation_attempts=args.rotation_attempts,
+                         validation_tolerance=(1e-10 if args.global_rotation else 0.0),
+                         geometric_probes=args.geometry_probes)
     recorder=PackingRecorder(cfg.output_dir, max(5.0,problem.warm_start.container_side+0.3) if args.initial_state else problem.initial_side,
                              video=args.video,fps=args.fps,
-                             width=args.image_width,frame_every=args.frame_every)
+                             width=args.image_width,frame_every=args.frame_every,
+                             validation_tolerance=(1e-10 if args.global_rotation else 0.0))
     operators={'scaled_pose':ops.scaled_pose,'micro':ops.micro,'contact':ops.contact,
                'restructure':ops.restructure,'rotate':ops.rotate,
                'compress':ops.compress}
     if args.operator_set=="legacy-hybrid":
         operators['learned']=ops.learned
+    if args.geometric_reasoning:
+        operators['geometric_reasoning']=ops.geometric_reasoning
     print('GEOMETRY_OPERATORS',list(operators),flush=True)
+    if args.global_rotation:
+        operators={name:(lambda parent,rng,intensity,fn=fn:
+                   problem.canonicalize(fn(parent,rng,intensity)))
+                   for name,fn in operators.items()}
+    search_started=time.perf_counter()
     result=Search(problem,operators,cfg,on_generation=recorder).run()
+    search_seconds=time.perf_counter()-search_started
+    rotation_stats={"enabled":bool(args.global_rotation),
+                    "calls":problem.rotation_calls,
+                    "seconds":problem.rotation_seconds,
+                    "rejected_due_strict_geometry":problem.rotation_rejected,
+                    "strict_overlap_flags":problem.rotation_rejected_overlap,
+                    "strict_outside_flags":problem.rotation_rejected_bounds,
+                    "boundary_excess_max":problem.rotation_boundary_excess_max,
+                    "boundary_excess_mean_when_flagged":(problem.rotation_boundary_excess_sum / max(1,problem.rotation_rejected_bounds)),
+                    "boundary_excess_examples":problem.rotation_boundary_excess_examples,
+                    "recovered_numerical_roundoff":problem.rotation_recovered_roundoff,
+                    "rejected_after_numerical_check":problem.rotation_rejected_genuine,
+                    "saved_side_sum":problem.rotation_saved_side,
+                    "search_seconds_including_rendering":search_seconds,
+                    "generation":result.generations,
+                    "evaluations":result.evaluations,
+                    "best_side":result.best_state.container_side}
+    (Path(cfg.output_dir)/"global_rotation_stats.json").write_text(
+        json.dumps(rotation_stats,indent=2),encoding="utf8")
+    print("GLOBAL_ROTATION_STATS",rotation_stats,flush=True)
     recorder.finish()
     if args.lineage_video:
         render_best_ancestry_video(cfg.output_dir,problem,fps=args.fps,
@@ -352,6 +644,9 @@ def main():
     print("LEGACY_LEARNING",{"calls":ops.learned_calls,
                              "improving_candidates":ops.learned_improved,
                              "action_statistics":ops.learn_controller.snapshot()["observations"]},flush=True)
+    print("GEOMETRIC_REASONING_STATS",ops.reasoner.snapshot(),flush=True)
+    (Path(cfg.output_dir)/"geometric_reasoning_stats.json").write_text(
+        json.dumps(ops.reasoner.snapshot(),indent=2),encoding="utf8")
     print("ROTATION_PROBES",{"calls":ops.rotation_probes,
                             "valid_rotated_proposals":ops.rotation_valid},flush=True)
     print("ROTATION_STATISTICS",rotation_statistics(result.best_state),flush=True)
