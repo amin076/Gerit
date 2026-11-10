@@ -221,3 +221,6 @@ __marimo__/
 
 # Gerit local experiments: large generated snapshots, archives, logs
 /results/
+
+# Generated competition files; retain historical experiments, avoid giant CSV commits
+/kaggle_output/
