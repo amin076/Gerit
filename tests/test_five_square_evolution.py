@@ -117,6 +117,38 @@ class RealEvolutionFiveTests(unittest.TestCase):
                 self.assertEqual(row["parent_ids"],
                                  [row["mutation"]["archived_individual_id"]])
 
+    def test_load_real_500_generation_best_and_preserve_geometry(self):
+        from scripts.run_five_square_evolution import load_initial_best
+        from gerit.geometry import Packing
+        import math
+        path=Path("experiments/five_squares/seed_from_local_500.json")
+        loaded=load_initial_best(path)
+        self.assertEqual(len(loaded.squares),5)
+        self.assertAlmostEqual(loaded.container_side,2.7743606307960853,places=12)
+        self.assertTrue(validate_packing(loaded,tolerance=0).valid)
+        self.assertGreater(abs(loaded.squares[4].angle),0.70)
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    offspring_per_parent=2,max_generations=2,seed=2780)
+        with tempfile.TemporaryDirectory() as tmp:
+            result=evolve(cfg,output_dir=tmp,coordinated=True,
+                          initial_seed=loaded,
+                          image_every=2)
+            self.assertLessEqual(result.best.container_side,loaded.container_side+1e-10)
+            self.assertEqual(len(result.history),3)
+            folder=next(Path(tmp).glob("run-*"))
+            rows=[json.loads(x) for x in (folder/"individuals.jsonl").read_text().splitlines()]
+            seedrow=next(x for x in rows if x["origin"]=="seed")
+            self.assertAlmostEqual(seedrow["container_side"],loaded.container_side,places=12)
+
+    def test_invalid_resume_geometry_is_rejected(self):
+        from scripts.run_five_square_evolution import load_initial_best
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"bad.json"
+            path.write_text(json.dumps({"side":2.0,"squares":[{"x":0.5,"y":0.5,"angle":0}]*5}))
+            with self.assertRaises(ValueError):
+                load_initial_best(path)
+
     def test_bad_image_stride_rejected(self):
         cfg=replace(load_config("configs/five-squares.json"),
                     initial_population=5,next_generation_population=5,
