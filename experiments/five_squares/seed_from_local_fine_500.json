@@ -28,5 +28,8 @@
       "y": 1.353642415592207,
       "angle": -0.7633063760521942
     }
-  ]
+  ],
+  "source_run_seed": 2715,
+  "source_best_individual_id": 48343,
+  "source_independent_validation": "certified interval SAT"
 }
