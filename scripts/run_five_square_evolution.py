@@ -25,6 +25,7 @@ from gerit.kaggle import Candidate, validate, puzzle_score, baseline_score
 from gerit.adaptive_v3 import propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
 from gerit.packing_geometry_moves import propose_pivot_release
+from gerit.contact_compaction import propose_contact_compaction
 
 
 def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | None:
@@ -41,12 +42,15 @@ def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | Non
     return candidate
 
 
-def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float) -> Packing | None:
+def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float,
+                            contact_compaction_probability: float = 0.0) -> Packing | None:
     """Historical Gerit structural jump: relocate ANY 1-3 squares and rotate freely.
 
     Unlike the old specialist five-square operator, this does NOT rebuild
     corners at angle zero and has no special preference for square index 4.
     """
+    if rng.random()<contact_compaction_probability:
+        return propose_contact_compaction(parent,rng,side_cap)
     selection=rng.random()
     if selection < 0.60:
         return propose_pivot_release(parent,rng,side_cap)
@@ -82,6 +86,8 @@ def main():
     p.add_argument("--initial-best-file",type=Path,default=None,
                    help="Read 500-generation best_result.json or compact seed; initialize NEW evolution from that layout")
     p.add_argument("--structural-probability",type=float,default=0.35)
+    p.add_argument("--contact-compaction-probability",type=float,default=0.0,
+                   help="Fraction of structural proposals devoted to contact-aware local compaction; default OFF for reproducible old runs")
     p.add_argument("--exploration-side-cap",type=float,default=3.8,
                    help="Permit intermediate valid layouts larger than initial L=3")
     p.add_argument("--historical-jump-every",type=int,default=20,
@@ -105,6 +111,8 @@ def main():
         p.error("report-every must be >=1")
     if a.exploration_side_cap < 3 or not math.isfinite(a.exploration_side_cap):
         p.error("exploration-side-cap must be finite and >=3")
+    if not 0 <= a.contact_compaction_probability <= 1:
+        p.error("contact-compaction-probability must be between 0 and 1")
     if not 0 <= a.structural_probability <= 1:
         p.error("structural-probability must be between 0 and 1")
     if a.historical_jump_every < 0 or a.historical_stagnation_after < 1:
@@ -144,7 +152,7 @@ def main():
     elif a.legacy_center_operator:
         chosen_mutator=corner_center_mutation
     else:
-        chosen_mutator=lambda parent,rng:free_structure_mutation(parent,rng,a.exploration_side_cap)
+        chosen_mutator=lambda parent,rng:free_structure_mutation(parent,rng,a.exploration_side_cap,a.contact_compaction_probability)
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
                   structural_mutator=chosen_mutator,
@@ -175,6 +183,7 @@ def main():
                                "legacy_fixed_corners" if a.legacy_center_operator else
                                "geometry_pivot_release_plus_reconfigure_contact"),
         "exploration_side_cap":a.exploration_side_cap,
+        "contact_compaction_probability":a.contact_compaction_probability,
         "historical_jump_every":a.historical_jump_every,
         "historical_stagnation_after":a.historical_stagnation_after,
         "rotated_best_squares":sum(abs(math.sin(2*s.angle))>1e-7 for s in result.best.squares),
