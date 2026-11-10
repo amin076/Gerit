@@ -1,0 +1,50 @@
+name: Gerit five-square corner-center experiment
+
+on:
+  push:
+    branches: ["feature/five-square-corner-center"]
+    paths:
+      - "experiments/five_squares/**"
+      - "scripts/run_five_square_corners.py"
+      - "tests/test_five_square_corners.py"
+      - ".github/workflows/five-square-corners.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  five-square:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install "mpmath>=1.3,<2"
+      - name: Run special-seed and geometry tests
+        run: python -m unittest discover -s tests -p 'test_five_square_corners.py' -v
+      - name: Run three independent five-square searches
+        run: python scripts/run_five_square_corners.py --seeds 2715 2716 2717 --proposals 250 --out results/five-square-github-trial
+      - name: Validate saved result against baseline
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("results/five-square-github-trial/comparison.json")
+          d=json.loads(p.read_text())
+          assert d["valid"] and d["n"]==5
+          assert d["gerit_side"]<3
+          assert d["score_improvement"]>0
+          print("VALIDATED IMPROVEMENT",d)
+          PY
+      - name: Upload generated poses, SVGs, metric report and five-row submission
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-five-square-corner-center
+          path: results/five-square-github-trial/
+          retention-days: 30
+          if-no-files-found: warn
