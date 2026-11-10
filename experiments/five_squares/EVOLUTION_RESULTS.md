@@ -76,3 +76,21 @@ Since this specialized operator already reaches within approximately
 4e-7 of the known mathematical optimal L for N=5, extra generations might
 not materially improve the best result. The no-special-operator control
 more honestly evaluates whether generic Gerit benefits from longer evolution.
+
+## Live terminal output (added after 500-generation configuration)
+
+The real evolutionary engine now provides a per-generation callback. The
+five-square CLI prints on generation zero, every ten generations by default,
+and the final generation. Each line reports generation/total, best side,
+current N=5 competition score, evaluated candidates, number of valid children,
+and elapsed seconds. It uses flush=True for immediate PowerShell output.
+The callback does not modify selection, mutations, or competition scoring.
+
+To show output every 20 generations instead:
+
+    py -3 scripts/run_five_square_evolution.py --generations 500 --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --report-every 20 --image-every 25 --out results/n5-evolution-500-seed2715
+
+For every ten generations (the default), use --report-every 10. Image saving
+frequency (--image-every) is independent of progress reporting frequency.
+The main 500-generation run must be started on the local machine; the
+GitHub workflow intentionally executes short smoke tests only.
