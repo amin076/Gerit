@@ -22,6 +22,8 @@ from gerit.config import load_config
 from gerit.evolution import evolve
 from gerit.geometry import Packing, validate_packing
 from gerit.kaggle import Candidate, validate, puzzle_score, baseline_score
+from gerit.adaptive_v3 import propose_reconfigure
+from gerit.contact_relocation import propose_contact_relocate
 
 
 def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | None:
@@ -38,6 +40,19 @@ def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | Non
     return candidate
 
 
+def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float) -> Packing | None:
+    """Historical Gerit structural jump: relocate ANY 1-3 squares and rotate freely.
+
+    Unlike the old specialist five-square operator, this does NOT rebuild
+    corners at angle zero and has no special preference for square index 4.
+    """
+    if rng.random() < 0.5:
+        result,_ = propose_reconfigure(parent,rng,side_cap,attempts=40)
+    else:
+        result,_ = propose_contact_relocate(parent,rng,side_cap,attempts=40)
+    return result
+
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--generations",type=int,default=500)
@@ -45,6 +60,13 @@ def main():
     p.add_argument("--offspring-per-parent",type=int,default=5)
     p.add_argument("--seed",type=int,default=2715)
     p.add_argument("--structural-probability",type=float,default=0.35)
+    p.add_argument("--exploration-side-cap",type=float,default=3.8,
+                   help="Permit intermediate valid layouts larger than initial L=3")
+    p.add_argument("--historical-jump-every",type=int,default=20,
+                   help="Reintroduce a genuine archived historical parent at this interval after stagnation; 0 disables")
+    p.add_argument("--historical-stagnation-after",type=int,default=30)
+    p.add_argument("--legacy-center-operator",action="store_true",
+                   help="Reproduce previous fixed-corner specialist for comparison only")
     p.add_argument("--no-structural",action="store_true",
                    help="Control: real generations with only Gerit's original coordinated operator")
     p.add_argument("--report-every",type=int,default=10,
@@ -59,6 +81,12 @@ def main():
         p.error("image-every must be >=1")
     if a.report_every < 1:
         p.error("report-every must be >=1")
+    if a.exploration_side_cap < 3 or not math.isfinite(a.exploration_side_cap):
+        p.error("exploration-side-cap must be finite and >=3")
+    if not 0 <= a.structural_probability <= 1:
+        p.error("structural-probability must be between 0 and 1")
+    if a.historical_jump_every < 0 or a.historical_stagnation_after < 1:
+        p.error("historical jump settings invalid")
     if a.out.exists():
         raise FileExistsError(f"Refusing to overwrite previous results: {a.out}")
     initial=corner_center_seed()
@@ -81,12 +109,23 @@ def main():
                   f"evaluations={generation.evaluations} | "
                   f"valid_children={generation.valid_children} | "
                   f"elapsed={elapsed:.1f}s",flush=True)
+    # The supplied geometry is ONLY the INITIAL seed: from here on every
+    # square is freely rotated, relocated, expanded and contracted.
+    if a.no_structural:
+        chosen_mutator=None
+    elif a.legacy_center_operator:
+        chosen_mutator=corner_center_mutation
+    else:
+        chosen_mutator=lambda parent,rng:free_structure_mutation(parent,rng,a.exploration_side_cap)
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
-                  structural_mutator=None if a.no_structural else corner_center_mutation,
+                  structural_mutator=chosen_mutator,
                   structural_probability=a.structural_probability,
                   image_every=a.image_every,
-                  progress_callback=report_progress)
+                  progress_callback=report_progress,
+                  exploration_side_cap=a.exploration_side_cap,
+                  historical_jump_every=a.historical_jump_every,
+                  historical_stagnation_after=a.historical_stagnation_after)
     assert len(result.history)==a.generations+1
     assert result.history[0].generation==0
     assert all(row.generation==index for index,row in enumerate(result.history))
@@ -104,6 +143,13 @@ def main():
         "report_every":a.report_every,
         "evaluations":result.evaluations,"accepted_children":result.accepted_children,
         "structural_hook_enabled":not a.no_structural,
+        "structural_operator":("disabled" if a.no_structural else
+                               "legacy_fixed_corners" if a.legacy_center_operator else
+                               "all_squares_free_reconfigure_or_contact_relocate"),
+        "exploration_side_cap":a.exploration_side_cap,
+        "historical_jump_every":a.historical_jump_every,
+        "historical_stagnation_after":a.historical_stagnation_after,
+        "rotated_best_squares":sum(abs(math.sin(2*s.angle))>1e-7 for s in result.best.squares),
         "seed":a.seed,"best_L":checked.side,
         "best_score":puzzle_score(5,checked.side),
         "grid_baseline_score":baseline_score(5),
