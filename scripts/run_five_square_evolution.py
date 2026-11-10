@@ -110,6 +110,7 @@ def main():
                   f"valid_children={generation.valid_children} | "
                   f"rotated_parents={generation.rotated_parents}/{a.parents} | "
                   f"geometric_distinct={generation.geometric_distinct} | "
+                  f"historical_jumps={generation.historical_jumps} | "
                   f"population_max_L={generation.max_population_side:.6f} | "
                   f"elapsed={elapsed:.1f}s",flush=True)
     # The supplied geometry is ONLY the INITIAL seed: from here on every
