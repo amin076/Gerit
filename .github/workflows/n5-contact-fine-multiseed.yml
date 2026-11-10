@@ -5,6 +5,7 @@ on:
     branches: [feature/five-square-corner-center]
     paths:
       - gerit/contact_compaction.py
+      - gerit/evolution.py
       - scripts/run_five_square_evolution.py
       - tests/test_contact_compaction.py
       - experiments/five_squares/seed_from_local_contact_500.json
