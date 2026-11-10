@@ -19,6 +19,7 @@ class Generation:
     rotated_parents: int = 0
     max_population_side: float = 0.0
     geometric_distinct: int = 0
+    historical_jumps: int = 0
 
 @dataclass(frozen=True)
 class Result:
@@ -169,6 +170,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     current_generation=0
     structural_proposals=0
     historical_archive: list[tuple[int,Packing,int]]=[]
+    historical_founders: tuple[tuple[int,Packing,int],...]=()
     historical_jumps=0
     last_improvement_generation=0
     adaptive_controller=AdaptiveController() if adaptive else None
@@ -287,7 +289,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 unique_poses.append(p)
         value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,
                          children,rotated,max(p.container_side for _,p in parents),
-                         len(unique_poses))
+                         len(unique_poses),historical_jumps)
         if recorder:
             recorder.append("generations.jsonl",{
                 **asdict(value),"selected_ids":[i for i,_ in parents],
@@ -303,7 +305,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     # Archive actual past parent genomes, including their generation and identity.
     # Historical revival is optional and does not alter existing runs by default.
     if historical_jump_every:
-        historical_archive.extend((uid,p,0) for uid,p in parents)
+        historical_founders=tuple((uid,p,0) for uid,p in parents)
+        historical_archive.extend(historical_founders)
     history=[snapshot(0,0)]
     stop_reason="max_generations"
     for gen in range(1,cfg.max_generations+1):
@@ -339,7 +342,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             if idle >= historical_stagnation_after and historical_archive:
                 # Revive one genuinely older individual, replacing a survivor,
                 # while always retaining the current best solution.
-                eligible=[item for item in historical_archive
+                eligible=[item for item in (*historical_founders,*historical_archive)
                           if item[2] <= gen-historical_jump_every and
                           packing_distance(item[1],best)>1e-7]
                 if eligible:
@@ -356,6 +359,11 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                         if replace_at is not None:
                             parents[replace_at]=revived
                             historical_jumps+=1
+                            if recorder:
+                                recorder.append('selection.jsonl',{
+                                    'generation':gen,'individual_id':revived[0],
+                                    'selected':True,'reason':'historical_archive_revival',
+                                    'side':revived[1].container_side})
             historical_archive.extend((uid,p,gen) for uid,p in parents)
             if len(historical_archive)>historical_archive_limit:
                 historical_archive=historical_archive[-historical_archive_limit:]
