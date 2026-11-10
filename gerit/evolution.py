@@ -123,7 +123,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -272,6 +272,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             })
             if gen == 0 or gen % image_every == 0 or gen == cfg.max_generations:
                 recorder.image(gen,parents,cfg.initial_container_side)
+        if progress_callback is not None:
+            progress_callback(value)
         return value
     history=[snapshot(0,0)]
     stop_reason="max_generations"
