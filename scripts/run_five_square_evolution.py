@@ -24,6 +24,7 @@ from gerit.geometry import Packing, validate_packing
 from gerit.kaggle import Candidate, validate, puzzle_score, baseline_score
 from gerit.adaptive_v3 import propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
+from gerit.packing_geometry_moves import propose_pivot_release
 
 
 def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | None:
@@ -46,7 +47,10 @@ def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float
     Unlike the old specialist five-square operator, this does NOT rebuild
     corners at angle zero and has no special preference for square index 4.
     """
-    if rng.random() < 0.5:
+    selection=rng.random()
+    if selection < 0.60:
+        return propose_pivot_release(parent,rng,side_cap)
+    if selection < 0.80:
         result,_ = propose_reconfigure(parent,rng,side_cap,attempts=40)
     else:
         result,_ = propose_contact_relocate(parent,rng,side_cap,attempts=40)
@@ -149,7 +153,7 @@ def main():
         "structural_hook_enabled":not a.no_structural,
         "structural_operator":("disabled" if a.no_structural else
                                "legacy_fixed_corners" if a.legacy_center_operator else
-                               "all_squares_free_reconfigure_or_contact_relocate"),
+                               "geometry_pivot_release_plus_reconfigure_contact"),
         "exploration_side_cap":a.exploration_side_cap,
         "historical_jump_every":a.historical_jump_every,
         "historical_stagnation_after":a.historical_stagnation_after,
