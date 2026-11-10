@@ -288,3 +288,37 @@ py -3 scripts/run_five_square_evolution.py --initial-best-file experiments/five_
 Existing original results are preserved. The new search resets RNG,
 selected population, and historical archive, but injects the exact
 best known user geometry. Output folder must not already exist.
+
+## Micro-scale near-contact geometry: multi-seed study from user L=2.70803534098831
+
+This is an **opt-in geometry-only** change, NOT an adjustment of
+parent selection, population scheduling or historical jump logic.
+
+- Latest saved checkpoint: `experiments/five_squares/seed_from_local_contact_500.json`
+- Old geometric scales: `(0.040, 0.013, 0.003)`
+- New micro scales: `(0.002, 0.00035, 0.000035)`
+- CLI flag: `--fine-contact-scales` (old behavior remains the default).
+- Both branches keep 60% of structural candidates assigned to
+  contact compaction; structural probability remains 35%.
+- Random seeds: 2715, 2716, 2717.
+- A/B generation budgets: 30 each, 6 real evolutionary runs.
+- Every run independently checks zero-tolerance geometry and
+  final interval SAT. The previous best L must not be lost.
+
+Workflow: https://github.com/amin076/Gerit/actions/runs/42813762838
+
+To run 500 local generations with the updated geometry after
+the smoke tests finish, use PowerShell:
+
+```powershell
+cd C:\Physics\Gerit
+git fetch origin
+git switch feature/five-square-corner-center
+git pull --ff-only
+py -3 -m unittest discover -s tests -p test_contact_compaction.py -v
+py -3 scripts/run_five_square_evolution.py --initial-best-file experiments/five_squares/seed_from_local_contact_500.json --generations 500 --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --contact-compaction-probability 0.60 --fine-contact-scales --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 25 --out results/n5-contact-fine-from-l2708035-500
+```
+
+The reported 500-generation result is a checkpoint, not a guarantee
+that additional micro-scale generations will improve it. Preserve
+the previous run folders and use a fresh output path.
