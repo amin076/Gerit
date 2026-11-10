@@ -3,3 +3,5 @@
 Pillow>=10,<13
 matplotlib>=3.8,<4
 shapely>=2.0,<3
+# Kaggle's official metric uses mpmath high-precision interval arithmetic.
+mpmath>=1.3,<2
