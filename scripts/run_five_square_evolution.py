@@ -62,7 +62,7 @@ def main():
                 initial_population=a.parents,next_generation_population=a.parents,
                 offspring_per_parent=a.offspring_per_parent,
                 max_generations=a.generations,
-                max_evaluations=max(10000, a.generations*a.parents*a.offspring_per_parent+500),
+                max_evaluations=a.generations*a.parents*a.offspring_per_parent+10000,
                 seed=a.seed)
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
