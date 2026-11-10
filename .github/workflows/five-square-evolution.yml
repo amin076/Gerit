@@ -35,9 +35,9 @@ jobs:
           MODE: ${{ matrix.mode }}
         run: |
           if [ "$MODE" = "coordinated-only" ]; then
-            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --no-structural --out results/five-evo-control
+            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --no-structural --exploration-side-cap 3.8 --historical-jump-every 5 --historical-stagnation-after 3 --out results/five-evo-control
           else
-            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --structural-probability 0.35 --out results/five-evo-hybrid
+            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --structural-probability 0.35 --exploration-side-cap 3.8 --historical-jump-every 5 --historical-stagnation-after 3 --out results/five-evo-hybrid
           fi
       - name: Archive all genuine evolutionary logs and geometry
         if: always()
