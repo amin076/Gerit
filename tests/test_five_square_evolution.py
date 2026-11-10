@@ -149,6 +149,28 @@ class RealEvolutionFiveTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_initial_best(path)
 
+    def test_near_contact_resume_seed_preserved_without_roundoff_rebase(self):
+        from scripts.run_five_square_evolution import load_initial_best
+        seed=load_initial_best(Path("experiments/five_squares/seed_from_local_contact_500.json"))
+        self.assertAlmostEqual(seed.container_side,2.70803534098831,places=12)
+        self.assertTrue(validate_packing(seed,tolerance=0).valid)
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    offspring_per_parent=2,max_generations=2,seed=2715)
+        with tempfile.TemporaryDirectory() as tmp:
+            result=evolve(cfg,output_dir=tmp,coordinated=True,
+                          initial_seed=seed,
+                          exploration_side_cap=3.8,
+                          image_every=2)
+            self.assertEqual(len(result.history),3)
+            self.assertLessEqual(result.best.container_side,seed.container_side+1e-10)
+            self.assertTrue(validate_packing(result.best,tolerance=0).valid)
+            run_dir=next(Path(tmp).glob("run-*"))
+            records=[json.loads(x) for x in (run_dir/"individuals.jsonl").read_text().splitlines()]
+            initial=next(row for row in records if row["origin"]=="seed")
+            self.assertEqual(initial["squares"][0]["x"],seed.squares[0].x)
+            self.assertEqual(initial["container_side"],seed.container_side)
+
     def test_bad_image_stride_rejected(self):
         cfg=replace(load_config("configs/five-squares.json"),
                     initial_population=5,next_generation_population=5,
