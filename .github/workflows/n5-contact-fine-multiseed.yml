@@ -1,0 +1,61 @@
+name: N5 micro contact scale multi-seed A B study
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - gerit/contact_compaction.py
+      - scripts/run_five_square_evolution.py
+      - tests/test_contact_compaction.py
+      - experiments/five_squares/seed_from_local_contact_500.json
+      - .github/workflows/n5-contact-fine-multiseed.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [2715, 2716, 2717]
+        treatment: [baseline, micro]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Verify geometry tests
+        run: python -m unittest discover -s tests -p test_contact_compaction.py -v
+      - name: Run 30 genuine Gerit generations from user's 500-gen best
+        shell: bash
+        env:
+          SEED: ${{ matrix.seed }}
+          TREATMENT: ${{ matrix.treatment }}
+        run: |
+          EXTRA=""
+          if [ "$TREATMENT" = "micro" ]; then EXTRA="--fine-contact-scales"; fi
+          python -u scripts/run_five_square_evolution.py \
+            --initial-best-file experiments/five_squares/seed_from_local_contact_500.json \
+            --generations 30 --parents 20 --offspring-per-parent 5 --seed "$SEED" \
+            --contact-compaction-probability 0.60 --structural-probability 0.35 \
+            --exploration-side-cap 3.8 --historical-jump-every 20 \
+            --historical-stagnation-after 30 --report-every 10 --image-every 15 \
+            $EXTRA --out "results/n5-fine-$TREATMENT-$SEED"
+      - name: Independent SAT validation and preservation of initial best
+        shell: bash
+        env:
+          SEED: ${{ matrix.seed }}
+          TREATMENT: ${{ matrix.treatment }}
+        run: |
+          python -c "import json,pathlib,os; p=pathlib.Path('results')/('n5-fine-'+os.environ['TREATMENT']+'-'+os.environ['SEED']); d=json.loads((p/'kaggle_evolution_comparison.json').read_text()); assert d['generations']==30; assert abs(d['initial_L']-2.70803534098831)<1e-12; assert d['best_L']<=d['initial_L']+1e-10; assert d['interval_validation']=='certified interval SAT'; print('PASS',os.environ['SEED'],os.environ['TREATMENT'],d['best_L'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n5-fine-${{ matrix.treatment }}-${{ matrix.seed }}
+          path: results/n5-fine-*/
+          if-no-files-found: warn
