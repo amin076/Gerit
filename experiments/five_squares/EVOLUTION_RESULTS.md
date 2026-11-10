@@ -244,3 +244,47 @@ stochastic population wasn't actually restored.
 
 To start from a downloaded local `best_result.json` directly instead,
 replace the --initial-best-file argument with the file path.
+
+## Contact-aware multi-square geometric compaction: A/B-verified
+
+Code: `gerit/contact_compaction.py`. No changes to the evolutionary
+engine for this study. It chooses contact-adjacent and boundary-active
+square groups, perturbs centers AND rotations jointly at three
+decreasing scales, enforces zero-tolerance SAT validation, and
+retains only non-worsening geometries. All squares can rotate.
+
+The study starts from user's exact 2000-generation result:
+`experiments/five_squares/seed_from_local_2000.json`,
+L = 2.7470414077646637. The CLI option
+`--contact-compaction-probability 0.60` dedicates 60% of the
+*structural proposal calls* to the new local compactor. Structural
+proposal probability itself stays 0.35; the other 65% calls use
+Gerit's unchanged coordinated mutation, and within remaining
+structural calls normal existing geometry operators still run.
+
+Verified GitHub Actions workflow:
+https://github.com/amin076/Gerit/actions/runs/42801428624
+
+| True generations | No compaction (A) | With compaction (B) |
+| --- | --- | --- |
+| 10 | 2.7470414077646637 | 2.713674530594033 |
+| 20 | 2.7470414077646637 | 2.7112254606484227 |
+
+All four jobs succeeded, including four dedicated unit tests in
+each job and independently certified interval SAT output validation.
+This is a promising early test on one random seed, NOT a multi-seed
+proof of general effectiveness.
+
+Recommended Windows local 500-generation followup:
+```powershell
+cd C:\Physics\Gerit
+git fetch origin
+git switch feature/five-square-corner-center
+git pull --ff-only
+py -3 -m unittest discover -s tests -p test_contact_compaction.py -v
+py -3 scripts/run_five_square_evolution.py --initial-best-file experiments/five_squares/seed_from_local_2000.json --generations 500 --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --contact-compaction-probability 0.60 --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 25 --out results/n5-contact-from-2000-500
+```
+
+Existing original results are preserved. The new search resets RNG,
+selected population, and historical archive, but injects the exact
+best known user geometry. Output folder must not already exist.
