@@ -16,6 +16,9 @@ class Generation:
     population_best: float
     distinct: int
     valid_children: int
+    rotated_parents: int = 0
+    max_population_side: float = 0.0
+    geometric_distinct: int = 0
 
 @dataclass(frozen=True)
 class Result:
@@ -275,7 +278,16 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     def snapshot(gen:int, children:int):
         unique_ids=len(set(i for i,_ in parents))
         population_best=min(p.container_side for _,p in parents)
-        value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,children)
+        rotated=sum(any(abs(math.sin(2*sq.angle))>1e-6 for sq in p.squares)
+                    for _,p in parents)
+        unique_poses=[]
+        for _,p in parents:
+            if not any(abs(p.container_side-q.container_side)<1e-8 and
+                       packing_distance(p,q)<1e-7 for q in unique_poses):
+                unique_poses.append(p)
+        value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,
+                         children,rotated,max(p.container_side for _,p in parents),
+                         len(unique_poses))
         if recorder:
             recorder.append("generations.jsonl",{
                 **asdict(value),"selected_ids":[i for i,_ in parents],
