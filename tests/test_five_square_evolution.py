@@ -60,6 +60,18 @@ class RealEvolutionFiveTests(unittest.TestCase):
             report=json.loads((run_dir/"run_summary.json").read_text())
             self.assertEqual(report["population_image_every"],3)
 
+    def test_progress_callback_receives_every_generation(self):
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    offspring_per_parent=2,max_generations=4,seed=2716)
+        progress=[]
+        result=evolve(cfg,coordinated=True,
+                      initial_seed=corner_center_seed(),
+                      structural_mutator=corner_center_mutation,
+                      progress_callback=progress.append)
+        self.assertEqual([g.generation for g in progress],[0,1,2,3,4])
+        self.assertEqual(progress[-1].best_side,result.best.container_side)
+
     def test_bad_image_stride_rejected(self):
         cfg=replace(load_config("configs/five-squares.json"),
                     initial_population=5,next_generation_population=5,
