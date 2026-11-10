@@ -45,7 +45,8 @@ def _contact_pairs(p: Packing) -> list[tuple[int,int,float]]:
 
 
 def propose_contact_compaction(parent: Packing, rng: random.Random,
-                               side_cap: float, *, attempts: int = 120
+                               side_cap: float, *, attempts: int = 120,
+                               scales: tuple[float,float,float] = (0.040, 0.013, 0.003)
                                ) -> Packing | None:
     """Locally optimize a *valid* packing using joint contact-adjacent moves.
 
@@ -55,6 +56,9 @@ def propose_contact_compaction(parent: Packing, rng: random.Random,
     even when intermediate proposals are invalid; invalid proposals are
     never parents. No precomputed solution geometry is used.
     """
+    if (len(scales)!=3 or any(not math.isfinite(v) or v<=0 for v in scales)
+            or not (scales[0]>=scales[1]>=scales[2])):
+        raise ValueError('scales must be three finite, positive, nonincreasing numbers')
     if not math.isfinite(side_cap) or attempts<1 or side_cap<1:
         return None
     if not validate_packing(parent,tolerance=0.0).valid:
@@ -71,7 +75,7 @@ def propose_contact_compaction(parent: Packing, rng: random.Random,
         return best
     for trial in range(attempts):
         fraction=trial/max(1,attempts-1)
-        scale=(0.040 if fraction<.30 else .013 if fraction<.65 else .003)
+        scale=(scales[0] if fraction<.30 else scales[1] if fraction<.65 else scales[2])
         angle_scale=scale*.72
         squares=list(current.squares)
         x0,x1,y0,y1=_box(current)
