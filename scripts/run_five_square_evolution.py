@@ -10,6 +10,7 @@ import argparse
 import json
 import math
 import random
+import time
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -46,6 +47,8 @@ def main():
     p.add_argument("--structural-probability",type=float,default=0.35)
     p.add_argument("--no-structural",action="store_true",
                    help="Control: real generations with only Gerit's original coordinated operator")
+    p.add_argument("--report-every",type=int,default=10,
+                   help="Print live progress in the terminal every N generations (default: 10)")
     p.add_argument("--image-every",type=int,default=25,
                    help="Keep generation logs for every generation; save population PNG every N generations")
     p.add_argument("--out",type=Path,default=Path("results/five-square-evolution-500"))
@@ -54,6 +57,8 @@ def main():
         p.error("generations>=1, parents>=2, offspring-per-parent>=1 required")
     if a.image_every < 1:
         p.error("image-every must be >=1")
+    if a.report_every < 1:
+        p.error("report-every must be >=1")
     if a.out.exists():
         raise FileExistsError(f"Refusing to overwrite previous results: {a.out}")
     initial=corner_center_seed()
@@ -64,11 +69,24 @@ def main():
                 max_generations=a.generations,
                 max_evaluations=a.generations*a.parents*a.offspring_per_parent+10000,
                 seed=a.seed)
+    start_time=time.perf_counter()
+    print(f"START N=5 | generations={a.generations} | parents={a.parents} | "
+          f"offspring/parent={a.offspring_per_parent} | report-every={a.report_every}",flush=True)
+    def report_progress(generation):
+        g=generation.generation
+        if g == 0 or g % a.report_every == 0 or g == a.generations:
+            elapsed=time.perf_counter()-start_time
+            print(f"GEN {g:4d}/{a.generations} | best_L={generation.best_side:.12f} | "
+                  f"score={puzzle_score(5,generation.best_side):.10f} | "
+                  f"evaluations={generation.evaluations} | "
+                  f"valid_children={generation.valid_children} | "
+                  f"elapsed={elapsed:.1f}s",flush=True)
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
                   structural_mutator=None if a.no_structural else corner_center_mutation,
                   structural_probability=a.structural_probability,
-                  image_every=a.image_every)
+                  image_every=a.image_every,
+                  progress_callback=report_progress)
     assert len(result.history)==a.generations+1
     assert result.history[0].generation==0
     assert all(row.generation==index for index,row in enumerate(result.history))
@@ -83,6 +101,7 @@ def main():
         "generations":len(result.history)-1,
         "parents":a.parents,"offspring_per_parent":a.offspring_per_parent,
         "image_every":a.image_every,
+        "report_every":a.report_every,
         "evaluations":result.evaluations,"accepted_children":result.accepted_children,
         "structural_hook_enabled":not a.no_structural,
         "seed":a.seed,"best_L":checked.side,
