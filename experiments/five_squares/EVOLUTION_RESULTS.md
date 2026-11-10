@@ -94,3 +94,43 @@ For every ten generations (the default), use --report-every 10. Image saving
 frequency (--image-every) is independent of progress reporting frequency.
 The main 500-generation run must be started on the local machine; the
 GitHub workflow intentionally executes short smoke tests only.
+
+## Critical correction: user-requested unrestricted five-square evolution
+
+The four-corners-plus-center arrangement is ONLY the initial geometry.
+The old default specialized center operator incorrectly forced the four
+outer square angles back to zero every time it ran. It is now OFF by default.
+It can be reenabled ONLY with --legacy-center-operator to reproduce the old
+biased experiment; do not use that option for genuine exploratory evolution.
+
+Normal default evolution combines Gerit's preexisting coordinated multi-square
+mutation (any 2-5 indices freely translate and rotate), and Gerit's existing
+reconfiguration and contact-guided structural moves (any square can move).
+No square is forced to remain upright and the center is not privileged.
+
+The envelope is permitted to expand to 3.8 during evolutionary exploration,
+while the initial supplied seed remains exactly L=3. Valid intermediate
+individuals larger than L=3 are allowed and can remain as exploratory parents.
+Historical-jump revival is enabled by default: after 30 no-improvement
+generations, every 20th generation can reintroduce one actual old parent.
+Both the original founders and a rolling historic archive are retained.
+Parent lineage and the archive source generation are logged for auditing.
+This is distinct from preserving only the historical best score.
+
+The console reports every 10 generations by default (or --report-every 20),
+including the number of rotated parents, true geometrically different parent
+layouts, maximum current population side, cumulative historical revivals,
+and objective score. These metrics help distinguish genuine exploration from
+mere reproduction of the known N=5 answer.
+
+RUN ON WINDOWS POWERSHELL (use a fresh output folder):
+
+    cd C:\Physics\Gerit
+    git fetch origin
+    git switch feature/five-square-corner-center
+    git pull --ff-only
+    py -3 -m unittest discover -s tests -p test_five_square_evolution.py -v
+    py -3 scripts/run_five_square_evolution.py --generations 500 --parents 20 --offspring-per-parent 5 --seed 2715 --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 25 --out results/n5-free-historic-500-seed2715
+
+This is a new prospective experiment, not a completed 500-generation result.
+The old 500-generation output cannot be used as proof of unrestricted movement.
