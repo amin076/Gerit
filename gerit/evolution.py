@@ -123,7 +123,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -145,6 +145,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         raise ValueError("compression=True requires coordinated=True or learning=True")
     if sum(bool(x) for x in (adaptive,coordinated,learning))>1:
         raise ValueError("adaptive, coordinated and learning are alternative mutators")
+    if type(image_every) is not int or image_every < 1:
+        raise ValueError('image_every must be a positive integer')
     if not 0 <= structural_probability <= 1:
         raise ValueError('structural_probability must be between zero and one')
     if initial_seed is not None:
@@ -268,7 +270,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 "learning_global_probability":learning_controller.probabilities(learning_controller.new_policy(),learning_controller.context(best)) if learning_controller is not None else None,
                 "elapsed_seconds":time.perf_counter()-clock
             })
-            recorder.image(gen,parents,cfg.initial_container_side)
+            if gen == 0 or gen % image_every == 0 or gen == cfg.max_generations:
+                recorder.image(gen,parents,cfg.initial_container_side)
         return value
     history=[snapshot(0,0)]
     stop_reason="max_generations"
@@ -336,7 +339,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "compression_accepted_moves":compression_moves,
             "custom_initial_seed":initial_seed is not None,
             "structural_operator_proposals":structural_proposals,
-            "structural_operator_probability":structural_probability if structural_mutator is not None else 0.0
+            "structural_operator_probability":structural_probability if structural_mutator is not None else 0.0,
+            "population_image_every":image_every
         })
         if learning_controller is not None:
             recorder.write("selected_population_final.json",{
