@@ -108,6 +108,9 @@ def main():
                   f"score={puzzle_score(5,generation.best_side):.10f} | "
                   f"evaluations={generation.evaluations} | "
                   f"valid_children={generation.valid_children} | "
+                  f"rotated_parents={generation.rotated_parents}/{a.parents} | "
+                  f"geometric_distinct={generation.geometric_distinct} | "
+                  f"population_max_L={generation.max_population_side:.6f} | "
                   f"elapsed={elapsed:.1f}s",flush=True)
     # The supplied geometry is ONLY the INITIAL seed: from here on every
     # square is freely rotated, relocated, expanded and contracted.
