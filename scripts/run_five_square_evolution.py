@@ -43,13 +43,17 @@ def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | Non
 
 
 def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float,
-                            contact_compaction_probability: float = 0.0) -> Packing | None:
+                            contact_compaction_probability: float = 0.0,
+                            fine_contact_scales: bool = False) -> Packing | None:
     """Historical Gerit structural jump: relocate ANY 1-3 squares and rotate freely.
 
     Unlike the old specialist five-square operator, this does NOT rebuild
     corners at angle zero and has no special preference for square index 4.
     """
     if rng.random()<contact_compaction_probability:
+        if fine_contact_scales:
+            return propose_contact_compaction(parent,rng,side_cap,
+                    scales=(0.002, 0.00035, 0.000035))
         return propose_contact_compaction(parent,rng,side_cap)
     selection=rng.random()
     if selection < 0.60:
@@ -88,6 +92,8 @@ def main():
     p.add_argument("--structural-probability",type=float,default=0.35)
     p.add_argument("--contact-compaction-probability",type=float,default=0.0,
                    help="Fraction of structural proposals devoted to contact-aware local compaction; default OFF for reproducible old runs")
+    p.add_argument("--fine-contact-scales",action="store_true",
+                   help="Use micron-scale joint contact perturbations instead of the baseline scales")
     p.add_argument("--exploration-side-cap",type=float,default=3.8,
                    help="Permit intermediate valid layouts larger than initial L=3")
     p.add_argument("--historical-jump-every",type=int,default=20,
@@ -152,7 +158,7 @@ def main():
     elif a.legacy_center_operator:
         chosen_mutator=corner_center_mutation
     else:
-        chosen_mutator=lambda parent,rng:free_structure_mutation(parent,rng,a.exploration_side_cap,a.contact_compaction_probability)
+        chosen_mutator=lambda parent,rng:free_structure_mutation(parent,rng,a.exploration_side_cap,a.contact_compaction_probability,a.fine_contact_scales)
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
                   structural_mutator=chosen_mutator,
@@ -184,6 +190,7 @@ def main():
                                "geometry_pivot_release_plus_reconfigure_contact"),
         "exploration_side_cap":a.exploration_side_cap,
         "contact_compaction_probability":a.contact_compaction_probability,
+        "fine_contact_scales":a.fine_contact_scales,
         "historical_jump_every":a.historical_jump_every,
         "historical_stagnation_after":a.historical_stagnation_after,
         "rotated_best_squares":sum(abs(math.sin(2*s.angle))>1e-7 for s in result.best.squares),
