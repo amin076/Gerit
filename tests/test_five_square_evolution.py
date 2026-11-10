@@ -82,7 +82,7 @@ class RealEvolutionFiveTests(unittest.TestCase):
                     initial_population=5,next_generation_population=5,
                     offspring_per_parent=2,max_generations=3,seed=2716)
         expanded=minimum_bounding_square((
-            Square(-0.2,-0.2),*seed.squares[1:]))
+            Square(-0.25,-0.25),*seed.squares[1:]))
         self.assertGreater(expanded.container_side,3.)
         self.assertLess(expanded.container_side,3.8)
         self.assertTrue(validate_packing(expanded,tolerance=0).valid)
