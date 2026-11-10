@@ -72,6 +72,51 @@ class RealEvolutionFiveTests(unittest.TestCase):
         self.assertEqual([g.generation for g in progress],[0,1,2,3,4])
         self.assertEqual(progress[-1].best_side,result.best.container_side)
 
+    def test_all_squares_can_rotate_and_valid_layout_can_exceed_three(self):
+        from dataclasses import replace
+        from gerit.geometry import Square, minimum_bounding_square
+        from scripts.run_five_square_evolution import free_structure_mutation
+        import random
+        seed=corner_center_seed()
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    offspring_per_parent=2,max_generations=3,seed=2716)
+        expanded=minimum_bounding_square((
+            Square(-0.2,-0.2),*seed.squares[1:]))
+        self.assertGreater(expanded.container_side,3.)
+        self.assertLess(expanded.container_side,3.8)
+        self.assertTrue(validate_packing(expanded,tolerance=0).valid)
+        proposed=free_structure_mutation(seed,random.Random(11),3.8)
+        if proposed is not None:
+            self.assertTrue(validate_packing(proposed,tolerance=0).valid)
+        with tempfile.TemporaryDirectory() as tmp:
+            result=evolve(cfg,output_dir=tmp,coordinated=True,
+                          initial_seed=seed,exploration_side_cap=3.8,
+                          structural_mutator=lambda parent,rng:expanded,
+                          structural_probability=1.0)
+            run_dir=next(Path(tmp).glob("run-*"))
+            records=[json.loads(x) for x in (run_dir/"individuals.jsonl").read_text().splitlines()]
+            self.assertTrue(any(row["origin"]=="offspring" and row["valid"] and
+                                row["container_side"]>3.0 for row in records))
+            self.assertTrue(all(g.geometric_distinct>=1 for g in result.history))
+
+    def test_historical_revival_records_real_old_parent(self):
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=6,next_generation_population=6,
+                    offspring_per_parent=2,max_generations=5,seed=2717)
+        with tempfile.TemporaryDirectory() as tmp:
+            evolve(cfg,output_dir=tmp,coordinated=True,
+                   initial_seed=corner_center_seed(),exploration_side_cap=3.8,
+                   historical_jump_every=1,historical_stagnation_after=1)
+            run_dir=next(Path(tmp).glob("run-*"))
+            records=[json.loads(x) for x in (run_dir/"individuals.jsonl").read_text().splitlines()]
+            revived=[x for x in records if x["origin"]=="historical_jump"]
+            for row in revived:
+                self.assertLess(row["mutation"]["archived_generation"],
+                                row["generation_created"])
+                self.assertEqual(row["parent_ids"],
+                                 [row["mutation"]["archived_individual_id"]])
+
     def test_bad_image_stride_rejected(self):
         cfg=replace(load_config("configs/five-squares.json"),
                     initial_population=5,next_generation_population=5,
