@@ -1,0 +1,44 @@
+name: N5 geometry-only 10 and 20 generations
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - gerit/packing_geometry_moves.py
+      - scripts/run_five_square_evolution.py
+      - tests/test_packing_geometry_moves.py
+      - .github/workflows/n5-geometry-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        generations: [10, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt
+      - name: Test geometry independent of evolution
+        run: python -m unittest discover -s tests -p test_packing_geometry_moves.py -v
+      - name: Run genuine Gerit generations using only changed geometry
+        run: |
+          python -u scripts/run_five_square_evolution.py --generations ${{ matrix.generations }} --parents 20 --offspring-per-parent 5 --seed 2715 --exploration-side-cap 3.8 --historical-jump-every 5 --historical-stagnation-after 3 --report-every 10 --image-every 10 --out results/n5-geometry-${{ matrix.generations }}
+      - name: Check history, valid result and actual improvement
+        run: |
+          python -c "import json, pathlib; n=${{ matrix.generations }}; p=pathlib.Path('results')/f'n5-geometry-{n}'; d=json.loads((p/'kaggle_evolution_comparison.json').read_text()); assert d['generations']==n; assert d['best_L']<3.0, d['best_L']; assert d['interval_validation']; print('PASSED:', n, 'generations, L=',d['best_L'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n5-geometry-${{ matrix.generations }}-generations
+          path: results/n5-geometry-${{ matrix.generations }}/
+          if-no-files-found: warn
