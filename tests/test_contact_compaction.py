@@ -37,6 +37,24 @@ class ContactCompactionTests(unittest.TestCase):
                 self.assertTrue(validate_packing(candidate,tolerance=0).valid)
                 self.assertLessEqual(candidate.container_side,initial.container_side+1e-10)
 
+    def test_500_generation_checkpoint_and_micro_scales(self):
+        j=json.loads(Path("experiments/five_squares/seed_from_local_contact_500.json").read_text())
+        parent=Packing(tuple(Square(**v) for v in j["squares"]),j["side"])
+        self.assertTrue(validate_packing(parent,tolerance=0).valid)
+        for seed in (2715,2716,2717):
+            child=propose_contact_compaction(
+                parent,random.Random(seed),3.8,attempts=160,
+                scales=(0.002,0.00035,0.000035))
+            if child is not None:
+                self.assertTrue(validate_packing(child,tolerance=0).valid)
+                self.assertLessEqual(child.container_side,parent.container_side+1e-10)
+
+    def test_scale_validation(self):
+        with self.assertRaises(ValueError):
+            propose_contact_compaction(self.seed,random.Random(1),3.8,scales=(0.01,0.1,0.001))
+        with self.assertRaises(ValueError):
+            propose_contact_compaction(self.seed,random.Random(1),3.8,scales=(0.01,0.001,-1))
+
     def test_bad_input_rejected(self):
         self.assertIsNone(propose_contact_compaction(self.seed,random.Random(1),float("inf")))
         self.assertIsNone(propose_contact_compaction(self.seed,random.Random(1),3.8,attempts=0))
