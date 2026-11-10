@@ -182,3 +182,65 @@ py -3 scripts/run_five_square_evolution.py --generations 500 --parents 20 --offs
 The command prints progress every 10 generations, retains every
 generation/individual/selection log, and saves population images every
 25 generations. Do not reuse an existing output directory.
+
+## New 2000-generation continuation seeded from user's REAL local 500-generation best
+
+Input is saved at `experiments/five_squares/seed_from_local_500.json`.
+It contains exactly the five square positions and angles from uploaded
+`best_result(1).json` (recorded `best.side=2.7743606307960853`).
+
+This is a NEW 2000-generation run seeded from the saved BEST GEOMETRY,
+NOT an exact restart of all 20 parent genomes, prior RNG state, branch
+history, historical archive or controller statistics. That information is
+not present in the one-best geometry file; the current evolve() interface
+accepts one initial packing and generates a fresh population from it.
+No alteration of the generic evolution engine has been made to support
+this continuation.
+
+### Precise interpretation of existing branch settings
+
+- Concurrent evolutionary populations (true parallel branches): **ONE**.
+- Current parent population: 20 individuals, NOT 20 independent branches.
+- Selection is 75% fitness (15 parent survivor slots) and 25% diversity
+  (5 survivor slots). These are parent-selection quotas, not historical
+  and normal branch counts.
+- Each generation proposes 20 x 5 = 100 offspring.
+- Specialist free geometry contributes 35% of offspring attempts, where
+  the geometric operator itself chooses pivot-release 60%, general
+  reconfiguration 20% and contact relocation 20%.
+- Historical archive stores 150 most recent selected genomes in addition
+  to original founders and selects AT MOST ONE historical parent when
+  enabled. With `--historical-jump-every 20` and
+  `--historical-stagnation-after 30`, it attempts one revival on
+  the 20-generation checkpoints when stalled for >=30 generations.
+- There is NO automatic second/third/fourth concurrent search branch,
+  NO scheduled branch birth or reduction, and NO historical-vs-normal
+  branch allocation in this five-square evolution entry point.
+  Do NOT misreport historical revivals as branch count.
+- The user-requested gradual multibranch creation/pruning system is a
+  different research workflow and is NOT implemented by this CLI.
+  Main selection, survival and historical behavior remain unchanged.
+
+### Run in Windows PowerShell
+
+    cd C:\Physics\Gerit
+    git status --short
+    git fetch origin
+    git switch feature/five-square-corner-center
+    git pull --ff-only
+    py -3 -m unittest discover -s tests -p test_five_square_evolution.py -v
+
+Then run with a fresh output directory:
+
+    py -3 scripts/run_five_square_evolution.py --initial-best-file experiments/five_squares/seed_from_local_500.json --generations 2000 --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 25 --out results/n5-continued-from-500-for-2000
+
+This will print current best, evaluations, historical revivals, actual
+geometric diversity, and rotated-parent counts every ten generations.
+The run refuses to overwrite its output directory. A successful run
+will produce an independently verified final packing and complete
+new evolution logs. The first generation is numbered 0 in the new
+experiment; it is not labeled global generation 500 because the old
+stochastic population wasn't actually restored.
+
+To start from a downloaded local `best_result.json` directly instead,
+replace the --initial-best-file argument with the file path.
