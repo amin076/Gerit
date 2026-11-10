@@ -260,8 +260,12 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 "recorded_at":utc_now()
             })
         return (uid,packing) if valid else None
-    initial=verified(initial_seed.squares if initial_seed is not None else base.squares)
-    assert initial is not None
+    # A user-supplied packing has already been validated above. Keep its exact
+    # coordinates and bounding side: rebasing a nearly touching valid packing
+    # can introduce round-off penetration and must not silently reject it.
+    initial=initial_seed if initial_seed is not None else verified(base.squares)
+    if initial is None:
+        raise ValueError("Generated baseline packing failed strict geometry validation")
     seed=propose(initial,0,None,"seed")
     assert seed is not None
     parents=[seed]
