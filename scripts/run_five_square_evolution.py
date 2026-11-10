@@ -20,7 +20,7 @@ sys.path.insert(0,str(ROOT))
 from experiments.five_squares.optimizer import corner_center_seed, best_inward_for_angle
 from gerit.config import load_config
 from gerit.evolution import evolve
-from gerit.geometry import Packing, validate_packing
+from gerit.geometry import Packing, Square, validate_packing
 from gerit.kaggle import Candidate, validate, puzzle_score, baseline_score
 from gerit.adaptive_v3 import propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
@@ -57,12 +57,30 @@ def free_structure_mutation(parent: Packing, rng: random.Random, side_cap: float
     return result
 
 
+def load_initial_best(path: Path) -> Packing:
+    """Read a saved best_result.json OR compact committed geometry seed.
+
+    This seeds a NEW evolutionary experiment; previous RNG state, full
+    population, and historical archive are not restored from a best-only file.
+    """
+    payload=json.loads(path.read_text(encoding='utf-8'))
+    best=payload.get('best',payload)
+    side=float(best.get('side',best.get('container_side')))
+    squares=tuple(Square(**record) for record in best['squares'])
+    result=Packing(squares,side)
+    if len(squares)!=5 or not validate_packing(result,tolerance=0.0).valid:
+        raise ValueError(f'Invalid five-square initial best in {path}')
+    return result
+
+
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--generations",type=int,default=500)
     p.add_argument("--parents",type=int,default=20)
     p.add_argument("--offspring-per-parent",type=int,default=5)
     p.add_argument("--seed",type=int,default=2715)
+    p.add_argument("--initial-best-file",type=Path,default=None,
+                   help="Read 500-generation best_result.json or compact seed; initialize NEW evolution from that layout")
     p.add_argument("--structural-probability",type=float,default=0.35)
     p.add_argument("--exploration-side-cap",type=float,default=3.8,
                    help="Permit intermediate valid layouts larger than initial L=3")
@@ -93,8 +111,8 @@ def main():
         p.error("historical jump settings invalid")
     if a.out.exists():
         raise FileExistsError(f"Refusing to overwrite previous results: {a.out}")
-    initial=corner_center_seed()
-    assert initial.container_side == 3 and validate_packing(initial,tolerance=0).valid
+    initial=load_initial_best(a.initial_best_file) if a.initial_best_file else corner_center_seed()
+    assert len(initial.squares)==5 and validate_packing(initial,tolerance=0).valid
     cfg=replace(load_config(ROOT/"configs/five-squares.json"),
                 initial_population=a.parents,next_generation_population=a.parents,
                 offspring_per_parent=a.offspring_per_parent,
@@ -102,7 +120,9 @@ def main():
                 max_evaluations=a.generations*a.parents*a.offspring_per_parent+10000,
                 seed=a.seed)
     start_time=time.perf_counter()
-    print(f"START N=5 | generations={a.generations} | parents={a.parents} | "
+    print(f"START N=5 | initial_L={initial.container_side:.12f} | "
+          f"source={a.initial_best_file or 'corner_center_seed'} | "
+          f"generations={a.generations} | parents={a.parents} | "
           f"offspring/parent={a.offspring_per_parent} | report-every={a.report_every}",flush=True)
     def report_progress(generation):
         g=generation.generation
@@ -143,8 +163,8 @@ def main():
         raise RuntimeError("Independent Kaggle interval validation failed: "+checked.reason)
     summary={
         "mode":"gerit.evolution.evolve_real_generations",
-        "initial_seed":"four_corners_one_center_all_zero_rotation",
-        "initial_L":3.0,
+        "initial_seed":str(a.initial_best_file) if a.initial_best_file else "four_corners_one_center_all_zero_rotation",
+        "initial_L":initial.container_side,
         "generations":len(result.history)-1,
         "parents":a.parents,"offspring_per_parent":a.offspring_per_parent,
         "image_every":a.image_every,
