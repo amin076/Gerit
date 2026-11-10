@@ -4,6 +4,7 @@ import json, math, random
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
+from typing import Callable
 from .config import RunConfig
 from .geometry import Packing, Square, grid_baseline, minimum_bounding_square, validate_packing
 
@@ -122,7 +123,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -144,7 +145,14 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         raise ValueError("compression=True requires coordinated=True or learning=True")
     if sum(bool(x) for x in (adaptive,coordinated,learning))>1:
         raise ValueError("adaptive, coordinated and learning are alternative mutators")
+    if not 0 <= structural_probability <= 1:
+        raise ValueError('structural_probability must be between zero and one')
+    if initial_seed is not None:
+        if len(initial_seed.squares) != cfg.n_squares or not validate_packing(initial_seed,tolerance=0.0).valid:
+            raise ValueError('initial_seed must be a valid packing with exactly N squares')
     rng=random.Random(cfg.seed)
+    current_generation=0
+    structural_proposals=0
     adaptive_controller=AdaptiveController() if adaptive else None
     coordinated_controller=CoordinatedController() if coordinated else None
     learning_controller=LearningController() if learning else None
@@ -153,7 +161,16 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     compression_trials=0
     compression_moves=0
     def make_child(parent: Packing, parent_id: int | None = None):
-        nonlocal compression_trials,compression_moves
+        nonlocal compression_trials,compression_moves,structural_proposals
+        if (current_generation > 0 and structural_mutator is not None and
+                rng.random() < structural_probability):
+            structural_proposals+=1
+            child=structural_mutator(parent,rng)
+            if child is not None and (len(child.squares)!=cfg.n_squares or
+                                      child.container_side>cfg.initial_container_side+1e-9 or
+                                      not validate_packing(child,tolerance=0.0).valid):
+                child=None
+            return child, {'operator':'custom_coordinated_structural_mutation'}, None
         if learning_controller is not None:
             parent_policy=learning_policies.get(parent_id)
             if parent_policy is None:
@@ -223,7 +240,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 "recorded_at":utc_now()
             })
         return (uid,packing) if valid else None
-    initial=verified(base.squares)
+    initial=verified(initial_seed.squares if initial_seed is not None else base.squares)
     assert initial is not None
     seed=propose(initial,0,None,"seed")
     assert seed is not None
@@ -256,6 +273,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     history=[snapshot(0,0)]
     stop_reason="max_generations"
     for gen in range(1,cfg.max_generations+1):
+        current_generation=gen
         if evaluations>=cfg.max_evaluations:
             stop_reason="max_evaluations"
             break
@@ -315,7 +333,10 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "learning_controller":learning_controller.snapshot() if learning_controller is not None else None,
             "compression_enabled":(compression or learning),
             "compression_trials":compression_trials,
-            "compression_accepted_moves":compression_moves
+            "compression_accepted_moves":compression_moves,
+            "custom_initial_seed":initial_seed is not None,
+            "structural_operator_proposals":structural_proposals,
+            "structural_operator_probability":structural_probability if structural_mutator is not None else 0.0
         })
         if learning_controller is not None:
             recorder.write("selected_population_final.json",{
