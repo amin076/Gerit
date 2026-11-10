@@ -39,15 +39,21 @@ def corner_center_mutation(parent: Packing, rng: random.Random) -> Packing | Non
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument("--generations",type=int,default=40)
-    p.add_argument("--parents",type=int,default=12)
-    p.add_argument("--offspring-per-parent",type=int,default=4)
+    p.add_argument("--generations",type=int,default=500)
+    p.add_argument("--parents",type=int,default=20)
+    p.add_argument("--offspring-per-parent",type=int,default=5)
     p.add_argument("--seed",type=int,default=2715)
     p.add_argument("--structural-probability",type=float,default=0.35)
     p.add_argument("--no-structural",action="store_true",
                    help="Control: real generations with only Gerit's original coordinated operator")
-    p.add_argument("--out",type=Path,default=Path("results/five-square-evolution"))
+    p.add_argument("--image-every",type=int,default=25,
+                   help="Keep generation logs for every generation; save population PNG every N generations")
+    p.add_argument("--out",type=Path,default=Path("results/five-square-evolution-500"))
     a=p.parse_args()
+    if a.generations < 1 or a.parents < 2 or a.offspring_per_parent < 1:
+        p.error("generations>=1, parents>=2, offspring-per-parent>=1 required")
+    if a.image_every < 1:
+        p.error("image-every must be >=1")
     if a.out.exists():
         raise FileExistsError(f"Refusing to overwrite previous results: {a.out}")
     initial=corner_center_seed()
@@ -61,7 +67,8 @@ def main():
     result=evolve(cfg,output_dir=str(a.out),image_columns=4,coordinated=True,
                   initial_seed=initial,
                   structural_mutator=None if a.no_structural else corner_center_mutation,
-                  structural_probability=a.structural_probability)
+                  structural_probability=a.structural_probability,
+                  image_every=a.image_every)
     assert len(result.history)==a.generations+1
     assert result.history[0].generation==0
     assert all(row.generation==index for index,row in enumerate(result.history))
@@ -75,6 +82,7 @@ def main():
         "initial_L":3.0,
         "generations":len(result.history)-1,
         "parents":a.parents,"offspring_per_parent":a.offspring_per_parent,
+        "image_every":a.image_every,
         "evaluations":result.evaluations,"accepted_children":result.accepted_children,
         "structural_hook_enabled":not a.no_structural,
         "seed":a.seed,"best_L":checked.side,
