@@ -134,3 +134,51 @@ RUN ON WINDOWS POWERSHELL (use a fresh output folder):
 
 This is a new prospective experiment, not a completed 500-generation result.
 The old 500-generation output cannot be used as proof of unrestricted movement.
+
+## 2026-11-10: Geometry-only corrective experiment, verified
+
+The **evolutionary engine was not changed for this correction**.
+A separate general geometry operator was added in
+`gerit/packing_geometry_moves.py`: `propose_pivot_release`.
+It selects a square by centrality/randomness, rotates that pivot,
+simultaneously moves the other squares radially inward or outward,
+and optionally rotates each other square independently. Each whole
+candidate is validated by zero-tolerance SAT. It is generic for N>=2;
+it contains no special constant for N=5, no precomputed arrangement,
+and no mathematically optimal solution injection.
+
+The N=5 experiment script selects this geometric operator in 60%
+of its optional structural proposals and retains general reconfigure
+and contact-guided relocation for the rest. Existing coordinated
+reproduction, selection, historical retrieval and scoring are unchanged.
+
+Independent GitHub Actions verification:
+https://github.com/amin076/Gerit/actions/runs/42794029015
+
+- Geometry-only unit tests: 3 passed for both jobs
+- 10 genuine generations: L=2.768677477322183; SAT certified
+- 20 genuine generations: L=2.768677477322183; SAT certified
+- 10-gen score (N5): 0.2381902094
+- 20-gen score (N5): 0.2381902094
+- Population: 20, 5 offspring per parent
+- 20/20 parents had at least one rotated square by generations 10 and 20
+- Archived historical revival count: 2 by generation 10, 4 by generation 20
+- The best did not improve from generation 10 to generation 20; this
+  is not a guarantee that 500 generations will improve further.
+
+To reproduce the 500-generation run in Windows PowerShell, update the
+existing branch and run with a NEW output directory:
+
+```powershell
+cd C:\Physics\Gerit
+git status --short
+git fetch origin
+git switch feature/five-square-corner-center
+git pull --ff-only
+py -3 -m unittest discover -s tests -p test_packing_geometry_moves.py -v
+py -3 scripts/run_five_square_evolution.py --generations 500 --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 25 --out results/n5-geometry-free-500-v2
+```
+
+The command prints progress every 10 generations, retains every
+generation/individual/selection log, and saves population images every
+25 generations. Do not reuse an existing output directory.
