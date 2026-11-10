@@ -42,6 +42,31 @@ class RealEvolutionFiveTests(unittest.TestCase):
             self.assertEqual(summary["completed_generations"],3)
             self.assertGreater(summary["structural_operator_proposals"],0)
 
+    def test_sparse_images_keep_all_generations(self):
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    offspring_per_parent=2,max_generations=4,seed=2716)
+        with tempfile.TemporaryDirectory() as tmp:
+            result=evolve(cfg,output_dir=tmp,coordinated=True,
+                          initial_seed=corner_center_seed(),
+                          structural_mutator=corner_center_mutation,
+                          image_every=3)
+            run_dir=next(Path(tmp).glob("run-*"))
+            history=(run_dir/"generations.jsonl").read_text().splitlines()
+            self.assertEqual(len(history),5)
+            images=sorted(p.name for p in (run_dir/"generation_images").glob("*.png"))
+            self.assertEqual(images,["gen_000.png","gen_003.png","gen_004.png"])
+            self.assertEqual(len(result.history),5)
+            report=json.loads((run_dir/"run_summary.json").read_text())
+            self.assertEqual(report["population_image_every"],3)
+
+    def test_bad_image_stride_rejected(self):
+        cfg=replace(load_config("configs/five-squares.json"),
+                    initial_population=5,next_generation_population=5,
+                    max_generations=1)
+        with self.assertRaises(ValueError):
+            evolve(cfg,initial_seed=corner_center_seed(),image_every=0)
+
     def test_seed_and_structural_operator_individually_valid(self):
         seed=corner_center_seed()
         import random
