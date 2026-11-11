@@ -52,6 +52,8 @@ def propagate(registry, *, apply=False, report=None, ledger=None,
               summary_csv=None, max_n=1000):
     if not 2 <= max_n <= 1000:
         raise ValueError("max_n must be between 2 and 1000")
+    if report is not None and Path(report).exists():
+        raise FileExistsError(f"Refusing to overwrite report: {report}")
     bank = read_registry(registry)
     # Lightweight virtual bank stores only accepted replacement packings.
     # All sources are read from the current registry unless improved in
@@ -156,12 +158,9 @@ def propagate(registry, *, apply=False, report=None, ledger=None,
         current_total = read_registry(registry)["total_score"]
     else:
         current_total = math.fsum(
-            current_sides[n]/math.sqrt(n)-1 for n in range(1,1001))
-        # For max_n < 1000, the untouched remainder stays in bank.
-        if max_n < 1000:
-            current_total += math.fsum(
-                float(bank["problems"][str(n)]["side"])/math.sqrt(n)-1
-                for n in range(max_n+1,1001))
+            (current_sides[n] if n<=max_n else
+             float(bank["problems"][str(n)]["side"])) / math.sqrt(n)-1
+            for n in range(1,1001))
     improved_targets = sorted(set(x["to"] for x in transitions))
     result = {
         "family":FAMILY,"applied":apply,"sources_screened":efforts,
