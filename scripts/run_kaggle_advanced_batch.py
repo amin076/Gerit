@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
 from gerit.config import load_config
 from gerit.evolution import evolve
 from gerit.geometry import Packing, Square, grid_baseline, validate_packing
+from gerit.symmetry_operators import multi_parent_quadrant_crossover
 from gerit.kaggle import Candidate, validate as interval_validate
 from gerit.contact_compaction import propose_contact_compaction
 from gerit.packing_geometry_moves import propose_pivot_release
@@ -118,6 +119,9 @@ def run_one(n, args, bank):
         coordinated=True, initial_seed=initial, initial_seeds=other,
         structural_mutator=lambda parent, r: structural_move(parent, r, exploration_cap),
         structural_probability=args.structural_probability,
+        multi_parent_mutator=lambda first, second, r: multi_parent_quadrant_crossover(
+            first, second, r, exploration_cap),
+        multi_parent_probability=args.crossover_probability,
         exploration_side_cap=exploration_cap,
         historical_jump_every=args.historical_jump_every,
         historical_stagnation_after=args.historical_stagnation_after,
@@ -166,6 +170,7 @@ def main():
     p.add_argument("--image-every", type=int, default=50)
     p.add_argument("--exploration-extra", type=float, default=0.8)
     p.add_argument("--structural-probability", type=float, default=0.35)
+    p.add_argument("--crossover-probability", type=float, default=0.20)
     p.add_argument("--historical-jump-every", type=int, default=20)
     p.add_argument("--historical-stagnation-after", type=int, default=30)
     p.add_argument("--output-root", default="results/kaggle_advanced_runs")
@@ -176,6 +181,8 @@ def main():
             or a.report_every < 1 or a.image_every < 1
             or not math.isfinite(a.exploration_extra) or a.exploration_extra < 0
             or not 0 <= a.structural_probability <= 1
+            or not 0 <= a.crossover_probability <= 1
+            or a.structural_probability + a.crossover_probability > 1
             or a.historical_jump_every < 0 or a.historical_stagnation_after < 1):
         p.error("Invalid experiment parameters")
     bank = read_registry(a.registry)
