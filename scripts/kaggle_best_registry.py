@@ -85,7 +85,21 @@ def propose_improvement(path, candidate, *, source, experiment_id,
     """
     if not source or not experiment_id:
         raise ValueError("source and experiment_id required")
-    n, new_side = _validate_solution(candidate)
+    # Cheap score gate before the expensive strict and interval validators.
+    # A rejected non-improving proposal cannot change the bank.
+    n = int(candidate["n"])
+    if not 1 <= n <= 1000:
+        raise ValueError("n must be within 1..1000")
+    new_side = float(candidate["side"])
+    if not math.isfinite(new_side) or new_side <= 0:
+        raise ValueError("candidate side must be finite and positive")
+    bank = read_registry(path)
+    old = bank["problems"][str(n)]
+    old_side = float(old["side"])
+    if not new_side < old_side - epsilon:
+        return {"accepted": False, "n": n, "current_side": old_side,
+                "candidate_side": new_side, "total_score": bank["total_score"]}
+    _validate_solution(candidate)
     # Independent interval geometry audit already present in Gerit.
     from gerit.kaggle import Candidate, validate as independent_validate
     poses = tuple((repr(float(p["x"])), repr(float(p["y"])),
@@ -93,12 +107,6 @@ def propose_improvement(path, candidate, *, source, experiment_id,
     independent = independent_validate(Candidate(n, poses, source, new_side))
     if not independent.valid:
         raise ValueError(f"Independent geometry rejected update: {independent.reason}")
-    bank = read_registry(path)
-    old = bank["problems"][str(n)]
-    old_side = float(old["side"])
-    if not new_side < old_side - epsilon:
-        return {"accepted": False, "n": n, "current_side": old_side,
-                "candidate_side": new_side, "total_score": bank["total_score"]}
     new = {
         "n": n, "side": new_side,
         "baseline_side": old["baseline_side"],
