@@ -7,7 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
-from gerit.geometry import validate_packing
+from gerit.geometry import validate_packing, grid_baseline
+from gerit.config import RunConfig
+from gerit.evolution import evolve
 from scripts.build_kaggle_grid_bank import grid_solution
 from scripts.kaggle_best_registry import initialize_registry
 from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one
@@ -26,6 +28,22 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
             p = fresh_founder(n, "auto", random.Random(n))
             self.assertEqual(len(p.squares), n)
             self.assertTrue(validate_packing(p, tolerance=0.0).valid)
+
+    def test_advanced_engine_best_callback_keeps_original_features(self):
+        events = []
+        cfg = RunConfig(
+            n_squares=5, initial_population=2,
+            next_generation_population=2, offspring_per_parent=1,
+            initial_container_side=3.0,
+            max_generations=1, max_evaluations=200, seed=2917)
+        result = evolve(
+            cfg, initial_seed=grid_baseline(5), coordinated=True,
+            historical_jump_every=20,
+            best_callback=lambda packing, generation:
+                events.append((generation, packing.container_side)))
+        self.assertTrue(events)
+        self.assertEqual(events[0][0], 0)
+        self.assertLessEqual(result.best.container_side, 3.0)
 
     def test_registry_conversion_is_optional_and_valid(self):
         stored = grid_solution(5)
