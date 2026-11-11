@@ -41,7 +41,7 @@ def x_core_five_plus_twelve_seed(n: int, rng: random.Random | None = None,
             pose.append(Square(sx*(u+clearance),sy*(u+clearance),math.pi/4))
     # The axis-oriented 3-square L-shaped group can fit in each diagonal
     # quadrant. Offset is geometric: r = sqrt(2)+1/2 (plus clearance).
-    r=math.sqrt(2)+.5+clearance
+    r=math.sqrt(2)+.5+3*clearance
     group=((r,arm_offset),(arm_offset,r),(r,r))
     for quarter in range(4):
         theta=quarter*math.pi/2
