@@ -127,7 +127,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None, exploration_side_cap: float | None = None, historical_jump_every: int = 0, historical_stagnation_after: int = 30, historical_archive_limit: int = 150) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, initial_seeds: tuple[Packing, ...] = (), multi_parent_mutator: Callable[[Packing, Packing, random.Random], Packing | None] | None = None, multi_parent_probability: float = 0.0, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None, exploration_side_cap: float | None = None, historical_jump_every: int = 0, historical_stagnation_after: int = 30, historical_archive_limit: int = 150) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -163,6 +163,15 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         raise ValueError('image_every must be a positive integer')
     if not 0 <= structural_probability <= 1:
         raise ValueError('structural_probability must be between zero and one')
+    if not 0 <= multi_parent_probability <= 1:
+        raise ValueError('multi_parent_probability must be between zero and one')
+    if structural_probability+multi_parent_probability > 1+1e-12:
+        raise ValueError('Sum of structural and multi-parent probabilities exceeds one')
+    if len(initial_seeds) >= cfg.initial_population:
+        raise ValueError('initial_seeds must leave at least one initial population slot')
+    for candidate in initial_seeds:
+        if len(candidate.squares)!=cfg.n_squares or not validate_packing(candidate,tolerance=0.0).valid:
+            raise ValueError('Every initial seed must have N strictly valid squares')
     if initial_seed is not None:
         if len(initial_seed.squares) != cfg.n_squares or not validate_packing(initial_seed,tolerance=0.0).valid:
             raise ValueError('initial_seed must be a valid packing with exactly N squares')
@@ -182,8 +191,23 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     compression_moves=0
     def make_child(parent: Packing, parent_id: int | None = None):
         nonlocal compression_trials,compression_moves,structural_proposals
+        # Optional two-parent geometry hook. Parent selection/survival
+        # and the historical archive remain completely unchanged.
+        roll=rng.random() if current_generation > 0 else 1.0
+        if (current_generation > 0 and multi_parent_mutator is not None and
+                roll < multi_parent_probability and len(parents)>1):
+            mates=[(uid,p) for uid,p in parents if uid!=parent_id]
+            if mates:
+                mate_id,mate=rng.choice(mates)
+                child=multi_parent_mutator(parent,mate,rng)
+                if child is not None and (len(child.squares)!=cfg.n_squares or
+                        child.container_side>exploration_side_cap+1e-9 or
+                        not validate_packing(child,tolerance=0.0).valid):
+                    child=None
+                return child, {'operator':'multi_parent_geometry_crossover',
+                               'additional_parent_ids':[mate_id]}, None
         if (current_generation > 0 and structural_mutator is not None and
-                rng.random() < structural_probability):
+                roll < structural_probability+multi_parent_probability):
             structural_proposals+=1
             child=structural_mutator(parent,rng)
             if child is not None and (len(child.squares)!=cfg.n_squares or
@@ -251,7 +275,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         if recorder:
             recorder.append("individuals.jsonl",{
                 "individual_id":uid,"generation_created":generation,
-                "parent_ids":[] if parent_id is None else [parent_id],
+                "parent_ids":([] if parent_id is None else [parent_id]) +
+                    (mutation.get("additional_parent_ids",[]) if isinstance(mutation,dict) else []),
                 "origin":origin,"valid":valid,
                 "rejected_reason":None if valid else "invalid_or_failed_mutation",
                 "container_side":packing.container_side if valid else None,
@@ -269,6 +294,13 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     seed=propose(initial,0,None,"seed")
     assert seed is not None
     parents=[seed]
+    # Additional independent founder geometries are recorded as genuine seeds
+    # before ordinary generation-zero random mutations. Not selected by name.
+    for candidate in initial_seeds:
+        extra=propose(candidate,0,None,"geometry_seed")
+        if extra is None:
+            raise ValueError("Previously verified geometry seed became invalid")
+        parents.append(extra)
     while len(parents)<cfg.initial_population and evaluations<cfg.max_evaluations:
         parent_id,parent=rng.choice(parents) if cfg.initialization_source=="grid_mutations" else parents[0]
         child, mutation_meta, learned_policy=make_child(parent,parent_id)
@@ -407,6 +439,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "compression_trials":compression_trials,
             "compression_accepted_moves":compression_moves,
             "custom_initial_seed":initial_seed is not None,
+            "additional_initial_seeds":len(initial_seeds),
+            "multi_parent_probability":multi_parent_probability,
             "structural_operator_proposals":structural_proposals,
             "structural_operator_probability":structural_probability if structural_mutator is not None else 0.0,
             "population_image_every":image_every,
