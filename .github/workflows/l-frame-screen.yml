@@ -1,0 +1,53 @@
+name: Gerit L-frame 1000-screen
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "gerit/l_frame_geometry.py"
+      - "scripts/run_l_frame_propagation.py"
+      - "tests/test_l_frame_propagation.py"
+      - ".github/workflows/l-frame-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  l-frame-screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Regression tests - recursion, rigorous geometry, dry-run
+        run: python -m unittest tests.test_l_frame_propagation -v
+      - name: Initialize isolated 1000-answer registry
+        run: python scripts/kaggle_best_registry.py --registry results/ci_l_frame_bank.json init
+      - name: Create original fifteen center-45 solutions
+        run: python scripts/run_center45_family.py --registry results/ci_l_frame_bank.json --report results/ci_l_frame_center45.json --apply
+      - name: Screen all 1000 inputs and report dry-run
+        run: |
+          python scripts/run_l_frame_propagation.py --registry results/ci_l_frame_bank.json --report results/ci_l_frame_dryrun.json --ledger results/ci_l_frame_dryrun_ledger.jsonl --summary results/ci_l_frame_dryrun_summary.csv
+      - name: Apply only certified improvements to isolated bank
+        run: |
+          python scripts/run_l_frame_propagation.py --registry results/ci_l_frame_bank.json --report results/ci_l_frame_applied.json --ledger results/ci_l_frame_method_ledger.jsonl --summary results/ci_l_frame_method_summary.csv --apply
+          python scripts/kaggle_best_registry.py --registry results/ci_l_frame_bank.json status
+      - name: Verify improved bank exports to complete Kaggle CSV
+        run: |
+          python scripts/export_registry_submission.py --registry results/ci_l_frame_bank.json --output results/ci_l_frame_submission.csv
+      - name: Preserve report, ledger, improved registry and verified CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-l-frame-screen-results
+          path: |
+            results/ci_l_frame_*.json
+            results/ci_l_frame_*.csv
+            results/ci_l_frame_*.jsonl
+          if-no-files-found: warn
+          retention-days: 21
