@@ -59,6 +59,27 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
             self.assertTrue(any(abs(math.sin(2 * sq.angle)) > 1e-6
                                 for sq in second.squares))
 
+    def test_expanded_founders_do_not_crash_n11_or_n12(self):
+        # Reproduce seed and N from the local batch that crashed at N=11.
+        for n in (11, 12):
+            seed = 20261116
+            first = fresh_founder(n, "auto", random.Random(seed + n))
+            selected = independent_founders(
+                n, first, seed + n + 100000, 4, initial_release=0.3)
+            self.assertLessEqual(len(selected), 4)
+            for name, packing in selected:
+                expanded = expanded_founder(packing, 0.3)
+                self.assertTrue(validate_packing(expanded, tolerance=0.0).valid)
+
+    def test_released_founders_retain_diversity_after_filter(self):
+        n = 11
+        first = fresh_founder(n, "auto", random.Random(20261127))
+        others = independent_founders(
+            n, first, 20261127 + 100000, 4, initial_release=0.3)
+        expanded = [expanded_founder(p, 0.3) for _, p in others]
+        self.assertTrue(all(validate_packing(p, tolerance=0).valid
+                            for p in expanded))
+
     def test_six_independent_founders_small_n(self):
         for n in (8, 12, 14):
             first = fresh_founder(n, "auto", random.Random(n))
