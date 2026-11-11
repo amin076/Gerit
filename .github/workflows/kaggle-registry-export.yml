@@ -1,0 +1,36 @@
+name: Gerit Kaggle registry submission export
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "scripts/export_registry_submission.py"
+      - ".github/workflows/kaggle-registry-export.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-submission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Create disposable complete registry
+        run: python scripts/kaggle_best_registry.py --registry results/ci_kaggle_submit_bank.json init
+      - name: Add fifteen certified center-45 improvements
+        run: python scripts/run_center45_family.py --registry results/ci_kaggle_submit_bank.json --report results/ci_kaggle_center45.json --apply
+      - name: Export CSV from registry, round-trip validate and compare score
+        run: python scripts/export_registry_submission.py --registry results/ci_kaggle_submit_bank.json --output kaggle_output/ci_registry_submission.csv
+      - name: Archive verified submission for manual review
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-registry-first-kaggle-csv
+          path: kaggle_output/ci_registry_submission.csv
+          retention-days: 7
