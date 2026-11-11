@@ -11,6 +11,7 @@ from typing import Callable
 
 from .geometry import Packing, Square, grid_baseline, minimum_bounding_square, validate_packing
 from .x_core_geometry import x_core_five_plus_twelve_seed
+from .t_core_geometry import t_core_three_arm_seed
 
 @dataclass(frozen=True)
 class GeometryOperator:
@@ -141,6 +142,7 @@ OPERATORS=(
     GeometryOperator("corner_first","fill corners before interior cells",corner_first_seed),
     GeometryOperator("four_corner_clusters","four repeated corner blocks with center",four_corner_cluster_seed),
     GeometryOperator("x_core_fourfold","five edge-connected 45-degree diamonds plus four 3-square groups",x_core_five_plus_twelve_seed),
+    GeometryOperator("t_core_three_arm","three-edge-adjacent 45-degree diamond arms with one axis-aligned gap square",t_core_three_arm_seed),
     GeometryOperator("random_sparse","randomized sparse lattice baseline",random_sparse_seed),
 )
 
