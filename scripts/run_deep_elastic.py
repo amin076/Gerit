@@ -125,7 +125,7 @@ def _ranking(d):
 
 def optimize(*,registry,n=230,generations=900,iterations=160,
              seed=2300,log_every=10,output_dir,apply=False,
-             resume_dir=None,shrink_max=.035):
+             resume_dir=None,shrink_max=.035,candidate_file=None):
     if not 2<=n<=1000 or generations<1 or iterations<1 or log_every<1:
         raise ValueError("Invalid N or budgets")
     if not 0<shrink_max<=.2:
@@ -140,6 +140,16 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         raise ValueError(f"Registry founder fails independent certification: {why}")
     current_registry_side=archive.container_side
     best=archive
+    if candidate_file is not None:
+        record=json.loads(Path(candidate_file).read_text(encoding="utf-8"))
+        if int(record["n"])!=n:
+            raise ValueError("Seed candidate N does not match target N")
+        starter=_packing_from_record(record)
+        starter_ok,starter_reason=_certify(starter)
+        if not starter_ok:
+            raise ValueError(f"Seed candidate failed independent validation: {starter_reason}")
+        if starter.container_side<best.container_side-1e-10:
+            best=starter
     near=None
     near_diag=None
     near_cap=None
@@ -174,7 +184,8 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         "n":n,"generations":generations,"iterations":iterations,
         "seed":seed,"log_every":log_every,"shrink_max":shrink_max,
         "registry_start_side":current_registry_side,
-        "resumed_from":resumed_from,"method":FAMILY})
+        "resumed_from":resumed_from,"candidate_file":str(candidate_file) if candidate_file else None,
+        "method":FAMILY})
     certified=0
     updates=0
     # A previous dry-run's verified best can be registered immediately:
@@ -310,13 +321,15 @@ def main():
     p.add_argument("--shrink-max",type=float,default=.035)
     p.add_argument("--output-dir",default="results/kaggle_deep/n230_g900_s2300")
     p.add_argument("--resume-dir")
+    p.add_argument("--candidate-file",help="Independently validated fixed-N starting packing from prior growth")
     p.add_argument("--apply",action="store_true")
     args=p.parse_args()
     optimize(registry=args.registry,n=args.n,
              generations=args.generations,iterations=args.iterations,
              seed=args.seed,log_every=args.log_every,
              output_dir=args.output_dir,apply=args.apply,
-             resume_dir=args.resume_dir,shrink_max=args.shrink_max)
+             resume_dir=args.resume_dir,shrink_max=args.shrink_max,
+             candidate_file=args.candidate_file)
 
 
 if __name__=="__main__":
