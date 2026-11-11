@@ -12,7 +12,7 @@ from gerit.config import RunConfig
 from gerit.evolution import evolve
 from scripts.build_kaggle_grid_bank import grid_solution
 from scripts.kaggle_best_registry import initialize_registry
-from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder
+from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder, released_rotation_founder
 from gerit.evolution import packing_distance
 
 
@@ -23,6 +23,26 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
         self.assertTrue(validate_packing(p, tolerance=0.0).valid)
         self.assertAlmostEqual(abs(p.squares[4].angle), math.pi / 4, places=10)
         self.assertLess(p.container_side, 3.0)
+
+    def test_released_rotations_are_valid_and_not_frozen(self):
+        for n in (6, 7, 8, 10):
+            original = grid_baseline(n)
+            candidate = released_rotation_founder(original, 451 + n)
+            self.assertIsNotNone(candidate)
+            self.assertTrue(validate_packing(candidate, tolerance=0.0).valid)
+            self.assertTrue(any(abs(math.sin(2 * sq.angle)) > 1e-6
+                                for sq in candidate.squares))
+            self.assertGreater(packing_distance(original, candidate), 1e-7)
+            self.assertLessEqual(candidate.container_side,
+                                 original.container_side + 0.75)
+
+    def test_two_parent_start_contains_rotated_explorer(self):
+        for n in (6, 7, 8, 10):
+            first = fresh_founder(n, "auto", random.Random(20261113+n))
+            label, second = independent_founder(n, first, 20261113+n+100000)
+            self.assertEqual(label, "released_rotations")
+            self.assertTrue(any(abs(math.sin(2 * sq.angle)) > 1e-6
+                                for sq in second.squares))
 
     def test_second_founder_is_not_a_copy(self):
         first = fresh_founder(5, "auto", random.Random(9))
