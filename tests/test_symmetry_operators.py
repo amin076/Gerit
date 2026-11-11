@@ -50,7 +50,7 @@ class SymmetryExperimentTests(unittest.TestCase):
                      initial_seeds=(special,),
                      coordinated=True,
                      multi_parent_mutator=lambda p,q,rng:multi_parent_quadrant_crossover(p,q,rng,5.8),
-                     multi_parent_probability=1.,
+                     multi_parent_probability=1.,structural_probability=0.,
                      exploration_side_cap=5.8,image_every=2)
             self.assertEqual(len(r.history),3)
             self.assertLess(r.best.container_side,5)
