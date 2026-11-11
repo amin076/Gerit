@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import numpy as np
 from gerit.elastic_growth import initial_growth_pose,relax_once,certified_candidate
+from gerit.packing_io import load_packing_json
 from gerit.elastic_repair import feasibility_diagnostics,repair_relaxation
 from gerit.geometry import Packing,Square
 from gerit.kaggle import Candidate,validate
@@ -28,7 +29,7 @@ def run(registry,*,n=228,attempts=24,iterations=500,seed=102,
     if best_file and Path(best_file).exists():
         raise FileExistsError("Refusing to overwrite best candidate file")
     bank=read_registry(registry)
-    entry=(json.loads(Path(source_file).read_text(encoding="utf-8"))
+    entry=(load_packing_json(source_file)
            if source_file else bank["problems"][str(n-1)])
     if int(entry["n"])!=n-1:
         raise ValueError("Source packing N does not match n-1")
