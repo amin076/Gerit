@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from gerit.config import RunConfig, SelectionGroup
 from gerit.evolution import evolve
+from gerit.geometry import Packing, Square, validate_packing
 from scripts.kaggle_best_registry import propose_improvement, read_registry
 
 
@@ -42,6 +43,12 @@ def main():
     bank = read_registry(args.registry)
     current = bank["problems"][str(args.n)]
     side_cap = math.ceil(math.sqrt(args.n))
+    champion = Packing(
+        tuple(Square(float(s["x"]), float(s["y"]), float(s["angle"]))
+              for s in current["squares"]),
+        float(current["side"]))
+    if len(champion.squares) != args.n or not validate_packing(champion, tolerance=0.0).valid:
+        raise ValueError("Stored champion failed strict validation")
     experiment_id = args.experiment_id or (
         f"n{args.n}-g{args.generations}-p{args.parents}-s{args.seed}-{args.mode}")
     result_file = Path(args.results_dir) / (experiment_id + ".json")
@@ -72,7 +79,8 @@ def main():
           f"stored_best={current['side']:.12f}", flush=True)
     result = evolve(cfg, coordinated=args.mode == "coordinated",
                     learning=args.mode == "learning",
-                    progress_callback=on_progress)
+                    progress_callback=on_progress,
+                    initial_packing=champion)
     candidate = {
         "n": args.n, "side": result.best.container_side,
         "squares": [asdict(square) for square in result.best.squares]
