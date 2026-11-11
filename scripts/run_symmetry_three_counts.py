@@ -20,7 +20,7 @@ from gerit.evolution import evolve, packing_distance
 from gerit.geometry import grid_baseline, validate_packing
 from gerit.kaggle import Candidate, puzzle_score, validate
 from gerit.symmetry_operators import (geometry_seed_bank,
-    multi_parent_quadrant_crossover, OPERATORS)
+    multi_parent_quadrant_crossover, propose_symmetry_group_move, OPERATORS)
 from scripts.run_three_square_counts import (
     geometry_only_mutation, PUBLISHED_REFERENCE_L)
 
@@ -68,11 +68,15 @@ def run_one(n,a,root):
                   f"distinct={g.geometric_distinct}/{a.parents} "
                   f"| historical_jumps={g.historical_jumps} "
                   f"| elapsed={time.perf_counter()-start:.1f}s",flush=True)
+    def symmetry_or_generic(parent,rng):
+        if rng.random()<a.symmetry_mutation_share:
+            return propose_symmetry_group_move(parent,rng,cap,attempts=35)
+        return geometry_only_mutation(parent,rng,cap,a.contact_probability)
     result=evolve(cfg,output_dir=str(root),image_columns=4,
         coordinated=True,
         initial_seed=founders[0][1],
         initial_seeds=tuple(p for _,p in founders[1:]),
-        structural_mutator=lambda p,rng: geometry_only_mutation(p,rng,cap,a.contact_probability),
+        structural_mutator=symmetry_or_generic,
         structural_probability=a.structural_probability,
         multi_parent_mutator=lambda p,q,rng: multi_parent_quadrant_crossover(p,q,rng,cap),
         multi_parent_probability=a.multi_parent_probability,
@@ -100,6 +104,7 @@ def run_one(n,a,root):
         "accepted_children":result.accepted_children,
         "multi_parent_probability":a.multi_parent_probability,
         "structural_probability":a.structural_probability,
+        "symmetry_mutation_share":a.symmetry_mutation_share,
         "elapsed_seconds":time.perf_counter()-start,
         "best_squares":[asdict(s) for s in result.best.squares],
     }
@@ -126,6 +131,7 @@ def main(argv=None):
     p.add_argument("--structural-probability",type=float,default=.30)
     p.add_argument("--multi-parent-probability",type=float,default=.20)
     p.add_argument("--contact-probability",type=float,default=.35)
+    p.add_argument("--symmetry-mutation-share",type=float,default=.40)
     p.add_argument("--historical-jump-every",type=int,default=20)
     p.add_argument("--historical-stagnation-after",type=int,default=30)
     p.add_argument("--out-root",type=Path,default=Path("results/n17-n18-n19-symmetry"))
@@ -135,6 +141,7 @@ def main(argv=None):
     if a.report_every<1 or a.image_every<1:p.error("invalid interval")
     if a.exploration_extra_side<0 or not math.isfinite(a.exploration_extra_side):p.error("invalid extra side")
     if a.structural_probability<0 or a.multi_parent_probability<0 or a.structural_probability+a.multi_parent_probability>1:p.error("invalid probabilities")
+    if not 0<=a.symmetry_mutation_share<=1:p.error("invalid symmetry share")
     if a.out_root.exists():p.error(f"Output exists: {a.out_root}")
     a.out_root.mkdir(parents=True)
     completed=[]
