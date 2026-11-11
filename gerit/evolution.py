@@ -20,6 +20,7 @@ class Generation:
     max_population_side: float = 0.0
     geometric_distinct: int = 0
     historical_jumps: int = 0
+    rotated_valid_children: int = 0
 
 @dataclass(frozen=True)
 class Result:
@@ -314,7 +315,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         parents.append(parents[0])
     best=min((p for _,p in parents),key=lambda p:p.container_side)
     best_id=min(parents,key=lambda item:item[1].container_side)[0]
-    def snapshot(gen:int, children:int):
+    def snapshot(gen:int, children:int, rotated_children:int=0):
         unique_ids=len(set(i for i,_ in parents))
         population_best=min(p.container_side for _,p in parents)
         rotated=sum(any(abs(math.sin(2*sq.angle))>1e-6 for sq in p.squares)
@@ -326,7 +327,7 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 unique_poses.append(p)
         value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,
                          children,rotated,max(p.container_side for _,p in parents),
-                         len(unique_poses),historical_jumps)
+                         len(unique_poses),historical_jumps,rotated_children)
         if recorder:
             recorder.append("generations.jsonl",{
                 **asdict(value),"selected_ids":[i for i,_ in parents],
@@ -416,7 +417,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                     "reason":"survived_selection" if uid in selected_ids else "not_selected",
                     "side":p.container_side
                 })
-        history.append(snapshot(gen,len(proposals)))
+        rotated_children=sum(any(abs(math.sin(2*sq.angle))>1e-6 for sq in p.squares)
+                             for _,p in proposals)
+        history.append(snapshot(gen,len(proposals),rotated_children))
         if evaluations>=cfg.max_evaluations:
             stop_reason="max_evaluations"
             break
