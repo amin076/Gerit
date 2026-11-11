@@ -103,6 +103,20 @@ def run_one(n, args, bank):
         raise FileExistsError(f"Refusing to overwrite history: {run_dir}")
     run_dir.mkdir(parents=True)
     start = time.perf_counter()
+    accepted_updates = []
+
+    def archive_new_best(packing, generation):
+        candidate = {"n": n, "side": packing.container_side,
+                     "squares": [asdict(sq) for sq in packing.squares]}
+        outcome = propose_improvement(
+            args.registry, candidate, source="gerit_advanced_evolution",
+            experiment_id=run_id, generation=generation,
+            operator="existing_advanced_structural")
+        if outcome["accepted"]:
+            accepted_updates.append(outcome)
+            print(f"NEW REGISTRY BEST N={n} GEN={generation} "
+                  f"L={packing.container_side:.12f} "
+                  f"total_score={outcome['total_score']:.12f}", flush=True)
 
     def progress(g):
         if g.generation == 0 or g.generation % args.report_every == 0 or g.generation == args.generations:
@@ -126,31 +140,29 @@ def run_one(n, args, bank):
         historical_jump_every=args.historical_jump_every,
         historical_stagnation_after=args.historical_stagnation_after,
         progress_callback=progress,
+        best_callback=archive_new_best,
     )
     poses = tuple((repr(s.x), repr(s.y), repr(s.angle)) for s in result.best.squares)
     check = interval_validate(Candidate(n, poses, "gerit-advanced-evolution", result.best.container_side))
     if not check.valid:
         raise ValueError(f"N={n} independent interval validation failed: {check.reason}")
-    candidate = {"n": n, "side": result.best.container_side,
-                 "squares": [asdict(s) for s in result.best.squares]}
-    # Recheck latest state after preceding runs, so no stale bank replacement.
-    update = propose_improvement(args.registry, candidate,
-                                 source="gerit_advanced_evolution",
-                                 experiment_id=run_id,
-                                 generation=len(result.history)-1,
-                                 operator="existing_advanced_structural")
+    # Every new engine record has already been offered during evolution.
+    # The final result is rechecked; a previously archived winner is retained.
+    archive_new_best(result.best, len(result.history)-1)
+    final_score = read_registry(args.registry)["total_score"]
     summary = {
         "n": n, "run_id": run_id, "start_mode": args.start,
         "founder": args.founder, "started_from_registry": args.start != "fresh",
         "old_registry_side": old["side"], "best_side": result.best.container_side,
         "interval_validation": check.reason,
         "evaluations": result.evaluations, "generations": len(result.history)-1,
-        "registry_update": update, "elapsed_seconds": time.perf_counter()-start,
+        "accepted_registry_updates": accepted_updates,
+        "final_total_score": final_score, "elapsed_seconds": time.perf_counter()-start,
     }
     (run_dir / "kaggle_bank_update.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8")
     print(f"DONE N={n} best_L={result.best.container_side:.12f} "
-          f"accepted={update['accepted']} total_score={update['total_score']:.12f}", flush=True)
+          f"accepted_improvements={len(accepted_updates)} total_score={final_score:.12f}", flush=True)
     return summary
 
 
