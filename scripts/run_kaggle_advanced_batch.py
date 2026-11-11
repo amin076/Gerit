@@ -21,7 +21,8 @@ if str(ROOT) not in sys.path:
 from gerit.config import load_config
 from gerit.evolution import evolve
 from gerit.geometry import Packing, Square, grid_baseline, validate_packing
-from gerit.symmetry_operators import multi_parent_quadrant_crossover
+from gerit.symmetry_operators import multi_parent_quadrant_crossover, geometry_seed_bank
+from gerit.evolution import packing_distance
 from gerit.kaggle import Candidate, validate as interval_validate
 from gerit.contact_compaction import propose_contact_compaction
 from gerit.packing_geometry_moves import propose_pivot_release
@@ -57,6 +58,24 @@ def fresh_founder(n, kind, rng):
     return grid_baseline(n)
 
 
+
+def independent_founder(n, first, seed):
+    """Choose an existing independent geometry with real structural difference."""
+    options = geometry_seed_bank(n, seed, copies=2)
+    eligible = []
+    for name, packing in options:
+        if packing is None or len(packing.squares) != n:
+            continue
+        if not validate_packing(packing, tolerance=0.0).valid:
+            continue
+        distance = packing_distance(first, packing)
+        if distance > 1e-7:
+            eligible.append((distance, name, packing))
+    if not eligible:
+        return None, None
+    _, name, packing = max(eligible, key=lambda t: t[0])
+    return name, packing
+
 def structural_move(parent, rng, cap):
     """Existing generic free-rotation, compaction and relocation operators."""
     roll = rng.random()
@@ -76,12 +95,17 @@ def run_one(n, args, bank):
     rng = random.Random(args.seed + n)
     fresh = fresh_founder(n, args.founder, rng)
     archive = from_registry(old) if args.start in ("stored", "mixed") else None
+    secondary_founder = None
     if args.start == "stored":
         initial, other = archive, ()
     elif args.start == "mixed":
         initial, other = fresh, (archive,)
     else:
         initial, other = fresh, ()
+    if args.start == "fresh" and args.parents >= 2 and args.diverse_founders:
+        secondary_founder, second = independent_founder(n, fresh, args.seed + n + 100000)
+        if second is not None:
+            other = (second,)
     # Any initial stored champion is optional; no side-length hard cap equals the
     # champion. All valid offspring may explore a larger container.
     side_cap = max(float(grid_baseline(n).container_side),
@@ -127,7 +151,8 @@ def run_one(n, args, bank):
                   f"elapsed={time.perf_counter()-start:.1f}s", flush=True)
 
     print(f"START N={n} initial={initial.container_side:.12f} "
-          f"stored={old['side']:.12f} mode={args.start} founder={args.founder}", flush=True)
+          f"stored={old['side']:.12f} mode={args.start} founder={args.founder} "
+          f"secondary_founder={secondary_founder}", flush=True)
     result = evolve(
         cfg, output_dir=str(run_dir), image_every=args.image_every,
         coordinated=True, initial_seed=initial, initial_seeds=other,
@@ -152,7 +177,8 @@ def run_one(n, args, bank):
     final_score = read_registry(args.registry)["total_score"]
     summary = {
         "n": n, "run_id": run_id, "start_mode": args.start,
-        "founder": args.founder, "started_from_registry": args.start != "fresh",
+        "founder": args.founder, "secondary_founder": secondary_founder,
+        "started_from_registry": args.start != "fresh",
         "old_registry_side": old["side"], "best_side": result.best.container_side,
         "interval_validation": check.reason,
         "evaluations": result.evaluations, "generations": len(result.history)-1,
@@ -177,6 +203,8 @@ def main():
     p.add_argument("--generations", type=int, default=50)
     p.add_argument("--parents", type=int, default=2)
     p.add_argument("--offspring", type=int, default=5)
+    p.add_argument("--diverse-founders", action=argparse.BooleanOptionalAction,
+                   default=True, help="Seed a second independent geometry when starting fresh")
     p.add_argument("--seed", type=int, default=20261111)
     p.add_argument("--report-every", type=int, default=10)
     p.add_argument("--image-every", type=int, default=50)
