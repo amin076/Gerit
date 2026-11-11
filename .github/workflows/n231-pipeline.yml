@@ -1,0 +1,28 @@
+name: Gerit certified 231 growth pipeline
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "scripts/run_elastic_repair.py"
+      - "scripts/run_deep_elastic.py"
+      - "tests/test_n231_pipeline.py"
+      - ".github/workflows/n231-pipeline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  n231-pipeline-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Verify external seed, independent certification, dry-run safety
+        run: python -m unittest tests.test_n231_pipeline tests.test_elastic_repair tests.test_deep_elastic -v
