@@ -116,3 +116,37 @@ continues to preserve previous winners if the new experiments fail.
 To explore more counts in parallel-sized *sequential* tasks, change
 `--counts`; do not assume any given N has a sub-grid solution.
 Do not repeat five-square runs just because the score hasn't changed.
+
+## 2026-11-11 second screening: no improvement, rotation diagnostic
+
+The user completed a second 50-generation batch with two independent
+axis-aligned founders, seeds 20261113+N. All of N=6,7,8,10 stayed at
+L=3,3,3,4 respectively. The stored total remained 28.806684265953.
+All ten-generation checkpoints reported `rotated_parents=0/2`;
+some historical revival took place, but no champion improved.
+
+Changes after these measurements:
+- Fresh mode now prioritizes a strictly validated
+  `released_rotations` second founder constructed by mildly expanding
+  an existing geometry, then independently perturbing all square angles.
+  This is an EXPLORATORY (sometimes larger) founder, not a benchmark
+  packing or a mandatory registry seed.
+- A new `rotated_valid_children` count appears beside
+  `rotated_parents`. Valid rotated births versus selected rotated
+  survivors distinguish mutation viability from loss by selection.
+- The original historical jumps, crossover, structural operators, and
+  elite-plus-diversity selection are unchanged.
+- This is a diagnostic experiment, NOT evidence that the score will improve.
+
+After updating this same branch:
+
+```cmd
+py -3 -m unittest tests.test_kaggle_advanced_bank -v
+py -3 scripts/run_kaggle_advanced_batch.py --counts 6 7 8 10 --generations 50 --parents 2 --offspring 5 --seed 20261114 --start fresh --founder auto --report-every 10
+py -3 scripts/kaggle_best_registry.py status
+```
+
+If rotated children are created but rotated parents disappear, examine
+survivor selection/fitness-diversity tradeoffs before adding more
+mutation operators. If both counts stay zero, investigate geometry
+proposal acceptance rates. Do not repeat identical experiments.
