@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 import numpy as np
 
 from gerit.elastic_growth import certified_candidate,relax_once
+from gerit.packing_io import load_packing_json
 from gerit.elastic_repair import feasibility_diagnostics
 from gerit.geometry import Packing,Square,minimum_bounding_square,validate_packing
 from gerit.kaggle import Candidate,validate as interval_validate
@@ -141,7 +142,7 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
     current_registry_side=archive.container_side
     best=archive
     if candidate_file is not None:
-        record=json.loads(Path(candidate_file).read_text(encoding="utf-8"))
+        record=load_packing_json(candidate_file)
         if int(record["n"])!=n:
             raise ValueError("Seed candidate N does not match target N")
         starter=_packing_from_record(record)
@@ -159,7 +160,7 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         past=json.loads((src/"progress.json").read_text(encoding="utf-8"))
         if int(past["n"])!=n:
             raise ValueError("Resume checkpoint uses a different N")
-        saved=json.loads((src/"best_valid.json").read_text(encoding="utf-8"))
+        saved=load_packing_json(src/"best_valid.json")
         restored=_packing_from_record(saved)
         confirmed,reason=_certify(restored)
         if not confirmed:
