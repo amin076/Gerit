@@ -221,8 +221,14 @@ def run_one(n, args, bank):
                 raw_fresh = selected
                 print(f"FOUNDER N={n} family={family} "
                       f"L={selected.container_side:.12f}", flush=True)
-    fresh = (expanded_founder(raw_fresh, args.initial_release)
-             if args.start == "fresh" else raw_fresh)
+    fresh = raw_fresh
+    if args.start == "fresh" and args.initial_release:
+        try:
+            fresh = expanded_founder(raw_fresh, args.initial_release)
+        except ValueError as exc:
+            # Geometry-based founders may not permit uniform radial release;
+            # keep the original valid pose instead of cancelling the batch.
+            print(f"INITIAL RELEASE SKIPPED N={n} reason={exc}", flush=True)
     archive = from_registry(old) if args.start in ("stored", "mixed") else None
     secondary_founder = None
     if args.start == "stored":
