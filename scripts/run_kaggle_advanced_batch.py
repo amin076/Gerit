@@ -179,6 +179,7 @@ def run_one(n, args, bank):
                   f"best_L={g.best_side:.12f} evaluations={g.evaluations} "
                   f"valid_children={g.valid_children} historical_jumps={g.historical_jumps} "
                   f"rotated_parents={g.rotated_parents}/{args.parents} "
+                  f"rotated_valid_children={g.rotated_valid_children} "
                   f"elapsed={time.perf_counter()-start:.1f}s", flush=True)
 
     print(f"START N={n} initial={initial.container_side:.12f} "
