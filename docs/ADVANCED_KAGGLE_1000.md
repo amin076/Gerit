@@ -85,3 +85,34 @@ output identity or a different seed.
 
 The command and tests should be executed on the target Windows environment
 before declaring the integration verified.
+
+## 2026-11-11 screening diagnosis and diverse-founder change
+
+Observed local 50-generation screening:
+- N=6: L=3, zero registry improvements
+- N=7: L=3, zero registry improvements
+- N=8: L=3, zero registry improvements
+- N=10: L=4, zero registry improvements
+- Baseline registry after importing historical N=5: 28.806684265953.
+
+A 2-parent population initialized from one seed can collapse back to grid
+geometry even though free rotations and historical jumps are enabled.
+The fresh mode now attempts a *second independent valid founder* from the
+pre-existing Gerit geometry operator bank, selecting a packing with a
+different structural signature. This is optional (disable with
+`--no-diverse-founders`). It is NOT a guarantee of better fitness and
+does not change survivor quotas, crossover, archive or geometry validators.
+
+To check the new initializer and compare against the already completed runs:
+
+```cmd
+py -3 -m unittest tests.test_kaggle_advanced_bank -v
+py -3 scripts/run_kaggle_advanced_batch.py --counts 6 7 8 10 --generations 50 --parents 2 --offspring 5 --seed 20261113 --start fresh --founder auto --report-every 10
+py -3 scripts/kaggle_best_registry.py status
+```
+
+Every experimental run has a unique seed-based directory. The registry
+continues to preserve previous winners if the new experiments fail.
+To explore more counts in parallel-sized *sequential* tasks, change
+`--counts`; do not assume any given N has a sub-grid solution.
+Do not repeat five-square runs just because the score hasn't changed.
