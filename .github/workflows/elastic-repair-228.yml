@@ -1,0 +1,46 @@
+name: Gerit N228 near-feasible repair
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "gerit/elastic_repair.py"
+      - "scripts/run_elastic_repair.py"
+      - "tests/test_elastic_repair.py"
+      - ".github/workflows/elastic-repair-228.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest tests.test_elastic_repair -v
+      - name: Build isolated bank with previous 30 better solutions
+        run: |
+          python scripts/kaggle_best_registry.py --registry results/ci_repair_bank.json init
+          python scripts/run_center45_family.py --registry results/ci_repair_bank.json --report results/ci_repair_center.json --apply
+          python scripts/run_l_frame_propagation.py --registry results/ci_repair_bank.json --report results/ci_repair_lframe.json --apply --ledger results/ci_repair_lframe_ledger.jsonl --summary results/ci_repair_lframe_summary.csv
+      - name: Seed verified N227 as the N228 founder
+        run: python scripts/run_elastic_growth.py --registry results/ci_repair_bank.json --first 227 --last 227 --attempts 16 --iterations 400 --seed 100 --apply --report results/ci_repair_n227.json --ledger results/ci_repair_n227_ledger.jsonl --summary results/ci_repair_n227_summary.csv
+      - name: Diagnose and repair N228 with amplified collision penalties
+        run: python scripts/run_elastic_repair.py --registry results/ci_repair_bank.json --n 228 --attempts 16 --iterations 400 --seed 102 --report results/ci_repair_n228.json --checkpoint results/ci_repair_n228_nearest.npz
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-n228-repair-diagnostics
+          path: |
+            results/ci_repair_n228.json
+            results/ci_repair_n228_nearest.npz
+            results/ci_repair_n227.json
+          if-no-files-found: warn
+          retention-days: 14
