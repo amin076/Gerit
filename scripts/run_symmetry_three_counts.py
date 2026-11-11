@@ -20,14 +20,29 @@ from gerit.evolution import evolve, packing_distance
 from gerit.geometry import grid_baseline, validate_packing
 from gerit.kaggle import Candidate, puzzle_score, validate
 from gerit.symmetry_operators import (geometry_seed_bank,
-    multi_parent_quadrant_crossover, propose_symmetry_group_move, OPERATORS)
+    four_corner_cluster_seed, multi_parent_quadrant_crossover,
+    propose_symmetry_group_move, OPERATORS)
+from gerit.cluster_geometry_operators import (
+    propose_cluster_compaction, propose_symmetry_break, build_incremental_founder)
 from scripts.run_three_square_counts import (
     geometry_only_mutation, PUBLISHED_REFERENCE_L)
 
-def prepare_founders(n, seed, parents, cap):
+def prepare_founders(n, seed, parents, cap, *, insertion_attempts=75):
     bank=geometry_seed_bank(n, seed, copies=4)
+    rng=random.Random(seed+7501)
+    # Generic N-agnostic constructive insertion, sourcing valid packings
+    # with fewer squares. The N=17 four-block pattern emerges from its
+    # own general 4*m*m+1 constructor, never a reference record.
+    sources=tuple(p for previous in range(max(2,n-3),n)
+                  if (p:=four_corner_cluster_seed(previous,rng)) is not None)
+    if sources:
+        inserted=build_incremental_founder(n,rng,cap,sources=sources,
+                                           attempts=insertion_attempts)
+        if inserted is not None:
+            bank.append(("incremental_insertion",inserted))
     # Reserve distinct structural families before sampling extra candidates.
     rank={name:i for i,name in enumerate(("four_corner_clusters",
+        "incremental_insertion",
         "fourfold","diagonal_pairs","horizontal","vertical",
         "corner_first","random_sparse","grid"))}
     bank.sort(key=lambda row:(rank.get(row[0],99), row[1].container_side))
@@ -47,7 +62,8 @@ def run_one(n,a,root):
     baseline=grid_baseline(n)
     cap=baseline.container_side+a.exploration_extra_side
     seed=a.seed+n
-    founders=prepare_founders(n, seed, a.parents, cap)
+    founders=prepare_founders(n, seed, a.parents, cap,
+                              insertion_attempts=a.insertion_attempts)
     print(f"\n{'='*64}\nSTART N={n} | founder_count={len(founders)} | "
           f"families={[name for name,_ in founders]} | cap={cap:.3f}",flush=True)
     for name,p in founders:
@@ -68,10 +84,35 @@ def run_one(n,a,root):
                   f"distinct={g.geometric_distinct}/{a.parents} "
                   f"| historical_jumps={g.historical_jumps} "
                   f"| elapsed={time.perf_counter()-start:.1f}s",flush=True)
+    operators=(
+        ("cluster_compaction",a.cluster_share,
+            lambda p,rng:propose_cluster_compaction(p,rng,cap,attempts=45)),
+        ("symmetry_break",a.break_share,
+            lambda p,rng:propose_symmetry_break(p,rng,cap,attempts=45)),
+        ("symmetry_pair",a.symmetry_mutation_share,
+            lambda p,rng:propose_symmetry_group_move(p,rng,cap,attempts=35)),
+    )
+    operator_stats={name:{"proposals":0,"valid":0,"parent_improvements":0}
+                    for name,_,_ in operators}
+    operator_stats["generic"]={"proposals":0,"valid":0,"parent_improvements":0}
     def symmetry_or_generic(parent,rng):
-        if rng.random()<a.symmetry_mutation_share:
-            return propose_symmetry_group_move(parent,rng,cap,attempts=35)
-        return geometry_only_mutation(parent,rng,cap,a.contact_probability)
+        roll=rng.random()
+        running=0.
+        name,invoke="generic",lambda:geometry_only_mutation(
+            parent,rng,cap,a.contact_probability)
+        for label,share,callback in operators:
+            running+=share
+            if roll<running:
+                name,invoke=label,lambda callback=callback:callback(parent,rng)
+                break
+        result=invoke()
+        stats=operator_stats[name]
+        stats["proposals"]+=1
+        if result is not None:
+            stats["valid"]+=1
+            if result.container_side<parent.container_side-1e-10:
+                stats["parent_improvements"]+=1
+        return result
     result=evolve(cfg,output_dir=str(root),image_columns=4,
         coordinated=True,
         initial_seed=founders[0][1],
@@ -105,6 +146,10 @@ def run_one(n,a,root):
         "multi_parent_probability":a.multi_parent_probability,
         "structural_probability":a.structural_probability,
         "symmetry_mutation_share":a.symmetry_mutation_share,
+        "cluster_operator_share":a.cluster_share,
+        "symmetry_break_share":a.break_share,
+        "operator_stats":operator_stats,
+        "insertion_attempts":a.insertion_attempts,
         "elapsed_seconds":time.perf_counter()-start,
         "best_squares":[asdict(s) for s in result.best.squares],
     }
@@ -113,6 +158,7 @@ def run_one(n,a,root):
     root.joinpath("best_packing.json").write_text(json.dumps(
         {"side":check.side,"squares":summary["best_squares"]},indent=2)+"\n",
         encoding="utf-8")
+    print(f"OPERATOR COUNTS N={n}: {operator_stats}",flush=True)
     print(f"COMPLETE N={n} | L={check.side:.12f} | "
           f"vs published={summary['gap_to_published_reference']:+.9f} "
           f"| verified={check.reason}",flush=True)
@@ -131,7 +177,10 @@ def main(argv=None):
     p.add_argument("--structural-probability",type=float,default=.30)
     p.add_argument("--multi-parent-probability",type=float,default=.20)
     p.add_argument("--contact-probability",type=float,default=.35)
-    p.add_argument("--symmetry-mutation-share",type=float,default=.40)
+    p.add_argument("--symmetry-mutation-share",type=float,default=.20)
+    p.add_argument("--cluster-share",type=float,default=.30)
+    p.add_argument("--break-share",type=float,default=.25)
+    p.add_argument("--insertion-attempts",type=int,default=75)
     p.add_argument("--historical-jump-every",type=int,default=20)
     p.add_argument("--historical-stagnation-after",type=int,default=30)
     p.add_argument("--out-root",type=Path,default=Path("results/n17-n18-n19-symmetry"))
@@ -141,7 +190,11 @@ def main(argv=None):
     if a.report_every<1 or a.image_every<1:p.error("invalid interval")
     if a.exploration_extra_side<0 or not math.isfinite(a.exploration_extra_side):p.error("invalid extra side")
     if a.structural_probability<0 or a.multi_parent_probability<0 or a.structural_probability+a.multi_parent_probability>1:p.error("invalid probabilities")
-    if not 0<=a.symmetry_mutation_share<=1:p.error("invalid symmetry share")
+    if not (0<=a.symmetry_mutation_share<=1 and
+            0<=a.cluster_share<=1 and 0<=a.break_share<=1 and
+            a.symmetry_mutation_share+a.cluster_share+a.break_share<=1):
+        p.error("invalid geometry share total")
+    if a.insertion_attempts<0:p.error("insertion-attempts must be nonnegative")
     if a.out_root.exists():p.error(f"Output exists: {a.out_root}")
     a.out_root.mkdir(parents=True)
     completed=[]
