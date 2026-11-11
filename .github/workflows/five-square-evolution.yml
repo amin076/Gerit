@@ -1,0 +1,49 @@
+name: Gerit REAL evolutionary generations for N5
+
+on:
+  push:
+    branches: ["feature/five-square-corner-center"]
+    paths:
+      - "gerit/evolution.py"
+      - "scripts/run_five_square_evolution.py"
+      - "tests/test_five_square_evolution.py"
+      - ".github/workflows/five-square-evolution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evolutionary:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [coordinated-only, coordinated-with-corner-center]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Focused evolution regression tests
+        run: python -m unittest discover -s tests -p test_five_square_evolution.py -v
+      - name: Run actual Gerit evolution and preserve generations
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          if [ "$MODE" = "coordinated-only" ]; then
+            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --no-structural --exploration-side-cap 3.8 --historical-jump-every 5 --historical-stagnation-after 3 --out results/five-evo-control
+          else
+            python scripts/run_five_square_evolution.py --generations 30 --parents 10 --offspring-per-parent 4 --seed 2715 --structural-probability 0.35 --exploration-side-cap 3.8 --historical-jump-every 5 --historical-stagnation-after 3 --out results/five-evo-hybrid
+          fi
+      - name: Archive all genuine evolutionary logs and geometry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-n5-evolution-${{ matrix.mode }}
+          path: results/five-evo-*/
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,42 @@
+name: N5 latest fine best restart 10-20 generations
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - experiments/five_squares/seed_from_local_fine_500.json
+      - .github/workflows/n5-latest-fine-continuation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  continuation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        generations: [10, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Check latest exact user seed
+        run: |
+          python -c "from scripts.run_five_square_evolution import load_initial_best; from pathlib import Path; p=load_initial_best(Path('experiments/five_squares/seed_from_local_fine_500.json')); assert abs(p.container_side - 2.707288549224993)<1e-12; print('valid source seed', p.container_side)"
+      - name: Run actual evolutionary generations and independent validator
+        run: |
+          python -u scripts/run_five_square_evolution.py --initial-best-file experiments/five_squares/seed_from_local_fine_500.json --generations ${{ matrix.generations }} --parents 20 --offspring-per-parent 5 --seed 2715 --structural-probability 0.35 --contact-compaction-probability 0.60 --fine-contact-scales --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 10 --out results/n5-new-continuation-${{ matrix.generations }}
+      - name: Check result valid and previous best retained
+        run: |
+          python -c "import json,pathlib; n=${{ matrix.generations }}; p=pathlib.Path('results')/f'n5-new-continuation-{n}'/'kaggle_evolution_comparison.json'; d=json.loads(p.read_text()); assert d['generations']==n; assert d['initial_L']==2.707288549224993; assert d['best_L']<=d['initial_L']+1e-10; assert d['interval_validation']=='certified interval SAT'; print('PASS',n,d['best_L'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n5-new-continuation-${{ matrix.generations }}
+          path: results/n5-new-continuation-*/
+          if-no-files-found: warn

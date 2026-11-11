@@ -1,0 +1,54 @@
+name: N5 contact-compaction geometry study
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - gerit/contact_compaction.py
+      - scripts/run_five_square_evolution.py
+      - tests/test_contact_compaction.py
+      - experiments/five_squares/seed_from_local_2000.json
+      - .github/workflows/n5-contact-compaction.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        generations: [10, 20]
+        treatment: [control, contact]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -p test_contact_compaction.py -v
+      - name: Run actual evolution from user 2000-generation geometry
+        shell: bash
+        env:
+          TREATMENT: ${{ matrix.treatment }}
+          GENS: ${{ matrix.generations }}
+        run: |
+          PROB=0.0
+          if [ "$TREATMENT" = "contact" ]; then PROB=0.60; fi
+          python -u scripts/run_five_square_evolution.py --initial-best-file experiments/five_squares/seed_from_local_2000.json --generations "$GENS" --parents 20 --offspring-per-parent 5 --seed 2715 --contact-compaction-probability "$PROB" --structural-probability 0.35 --exploration-side-cap 3.8 --historical-jump-every 20 --historical-stagnation-after 30 --report-every 10 --image-every 10 --out "results/contact-$TREATMENT-$GENS"
+      - name: Validate output and geometry retention
+        shell: bash
+        env:
+          TREATMENT: ${{ matrix.treatment }}
+          GENS: ${{ matrix.generations }}
+        run: |
+          python -c "import json,pathlib,os; p=pathlib.Path('results')/('contact-'+os.environ['TREATMENT']+'-'+os.environ['GENS']); d=json.loads((p/'kaggle_evolution_comparison.json').read_text()); assert abs(d['initial_L']-2.7470414077646637)<1e-12; assert d['best_L']<=d['initial_L']+1e-10; assert d['interval_validation']=='certified interval SAT'; assert d['generations']==int(os.environ['GENS']); print('PASS',os.environ['TREATMENT'],d['best_L'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n5-contact-${{ matrix.treatment }}-${{ matrix.generations }}
+          path: results/contact-*/
+          if-no-files-found: warn

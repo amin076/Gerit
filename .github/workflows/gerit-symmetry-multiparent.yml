@@ -1,0 +1,89 @@
+name: Gerit symmetry and multi-parent smoke
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - gerit/symmetry_operators.py
+      - gerit/cluster_geometry_operators.py
+      - gerit/x_core_geometry.py
+      - gerit/t_core_geometry.py
+      - gerit/evolution.py
+      - scripts/run_symmetry_three_counts.py
+      - tests/test_symmetry_operators.py
+      - tests/test_cluster_geometry_operators.py
+      - tests/test_x_core_geometry.py
+      - tests/test_t_core_geometry.py
+      - .github/workflows/gerit-symmetry-multiparent.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Run symmetry operator and lineage regression
+        run: |
+          python -m unittest discover -s tests -p test_symmetry_operators.py -v
+          python -m unittest discover -s tests -p test_cluster_geometry_operators.py -v
+          python -m unittest discover -s tests -p test_x_core_geometry.py -v
+          python -m unittest discover -s tests -p test_t_core_geometry.py -v
+      - name: Syntax check
+        run: python -m py_compile gerit/evolution.py gerit/symmetry_operators.py gerit/cluster_geometry_operators.py gerit/x_core_geometry.py gerit/t_core_geometry.py scripts/run_symmetry_three_counts.py
+
+  actual-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Run three Ns sequentially for ten real generations
+        run: |
+          python -u scripts/run_symmetry_three_counts.py \
+            --generations 10 --parents 8 --offspring-per-parent 1 \
+            --report-every 5 --image-every 10 \
+            --out-root results/symmetry-smoke
+      - name: Check independently validated best results
+        run: |
+          python -c "import json,pathlib; p=pathlib.Path('results/symmetry-smoke'); d=json.loads((p/'sequential_summary.json').read_text()); assert d['status']=='completed' and [x['n'] for x in d['completed']]==[17,18,19]; assert all(x['independent_validation'] in ('certified interval SAT','certified exact grid') for x in d['completed']); assert d['completed'][0]['best_L']<5.0 and all(x['generations']==10 for x in d['completed']); print('PASS', [(x['n'],x['best_L']) for x in d['completed']])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: symmetry-smoke-results
+          path: results/symmetry-smoke/
+
+  t-only-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Run isolated T-core 17-square genuine evolutionary generations
+        run: |
+          python -u scripts/run_symmetry_three_counts.py \
+            --counts 17 --founder-mode t-only \
+            --generations 5 --parents 8 --offspring-per-parent 2 \
+            --report-every 1 --image-every 5 \
+            --out-root results/t-core-isolated-smoke
+      - name: Verify isolation and no invalid geometry
+        run: |
+          python -c "import json,pathlib; p=pathlib.Path('results/t-core-isolated-smoke'); j=json.loads((p/'sequential_summary.json').read_text()); assert j['status']=='completed' and len(j['completed'])==1; a=j['completed'][0]; assert a['n']==17 and a['generations']==5 and a['founder_mode']=='t-only' and a['founder_names']==['t_core_three_arm'] and a['best_founder_L']<5 and a['independent_validation'] in ('certified interval SAT','certified exact grid'); print('PASS isolated T-core', a['best_L'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t-core-isolated-smoke
+          path: results/t-core-isolated-smoke/

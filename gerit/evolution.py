@@ -4,6 +4,7 @@ import json, math, random
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
+from typing import Callable
 from .config import RunConfig
 from .geometry import Packing, Square, grid_baseline, minimum_bounding_square, validate_packing
 
@@ -15,6 +16,10 @@ class Generation:
     population_best: float
     distinct: int
     valid_children: int
+    rotated_parents: int = 0
+    max_population_side: float = 0.0
+    geometric_distinct: int = 0
+    historical_jumps: int = 0
 
 @dataclass(frozen=True)
 class Result:
@@ -122,7 +127,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, initial_seeds: tuple[Packing, ...] = (), multi_parent_mutator: Callable[[Packing, Packing, random.Random], Packing | None] | None = None, multi_parent_probability: float = 0.0, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None, exploration_side_cap: float | None = None, historical_jump_every: int = 0, historical_stagnation_after: int = 30, historical_archive_limit: int = 150) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -144,7 +149,39 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         raise ValueError("compression=True requires coordinated=True or learning=True")
     if sum(bool(x) for x in (adaptive,coordinated,learning))>1:
         raise ValueError("adaptive, coordinated and learning are alternative mutators")
+    if type(historical_jump_every) is not int or historical_jump_every < 0:
+        raise ValueError('historical_jump_every must be nonnegative')
+    if type(historical_stagnation_after) is not int or historical_stagnation_after < 1:
+        raise ValueError('historical_stagnation_after must be positive')
+    if type(historical_archive_limit) is not int or historical_archive_limit < 1:
+        raise ValueError('historical_archive_limit must be positive')
+    if exploration_side_cap is None:
+        exploration_side_cap=cfg.initial_container_side
+    if not math.isfinite(exploration_side_cap) or exploration_side_cap < cfg.initial_container_side:
+        raise ValueError('exploration_side_cap must be finite and >= initial_container_side')
+    if type(image_every) is not int or image_every < 1:
+        raise ValueError('image_every must be a positive integer')
+    if not 0 <= structural_probability <= 1:
+        raise ValueError('structural_probability must be between zero and one')
+    if not 0 <= multi_parent_probability <= 1:
+        raise ValueError('multi_parent_probability must be between zero and one')
+    if structural_probability+multi_parent_probability > 1+1e-12:
+        raise ValueError('Sum of structural and multi-parent probabilities exceeds one')
+    if len(initial_seeds) >= cfg.initial_population:
+        raise ValueError('initial_seeds must leave at least one initial population slot')
+    for candidate in initial_seeds:
+        if len(candidate.squares)!=cfg.n_squares or not validate_packing(candidate,tolerance=0.0).valid:
+            raise ValueError('Every initial seed must have N strictly valid squares')
+    if initial_seed is not None:
+        if len(initial_seed.squares) != cfg.n_squares or not validate_packing(initial_seed,tolerance=0.0).valid:
+            raise ValueError('initial_seed must be a valid packing with exactly N squares')
     rng=random.Random(cfg.seed)
+    current_generation=0
+    structural_proposals=0
+    historical_archive: list[tuple[int,Packing,int]]=[]
+    historical_founders: tuple[tuple[int,Packing,int],...]=()
+    historical_jumps=0
+    last_improvement_generation=0
     adaptive_controller=AdaptiveController() if adaptive else None
     coordinated_controller=CoordinatedController() if coordinated else None
     learning_controller=LearningController() if learning else None
@@ -153,17 +190,42 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     compression_trials=0
     compression_moves=0
     def make_child(parent: Packing, parent_id: int | None = None):
-        nonlocal compression_trials,compression_moves
+        nonlocal compression_trials,compression_moves,structural_proposals
+        # Optional two-parent geometry hook. Parent selection/survival
+        # and the historical archive remain completely unchanged.
+        roll=rng.random() if (current_generation > 0 and multi_parent_mutator is not None) else None
+        if (current_generation > 0 and multi_parent_mutator is not None and
+                roll is not None and roll < multi_parent_probability and len(parents)>1):
+            mates=[(uid,p) for uid,p in parents if uid!=parent_id]
+            if mates:
+                mate_id,mate=rng.choice(mates)
+                child=multi_parent_mutator(parent,mate,rng)
+                if child is not None and (len(child.squares)!=cfg.n_squares or
+                        child.container_side>exploration_side_cap+1e-9 or
+                        not validate_packing(child,tolerance=0.0).valid):
+                    child=None
+                return child, {'operator':'multi_parent_geometry_crossover',
+                               'additional_parent_ids':[mate_id]}, None
+        if (current_generation > 0 and structural_mutator is not None and
+                (rng.random() < structural_probability if roll is None else
+                 roll < structural_probability+multi_parent_probability)):
+            structural_proposals+=1
+            child=structural_mutator(parent,rng)
+            if child is not None and (len(child.squares)!=cfg.n_squares or
+                                      child.container_side>exploration_side_cap+1e-9 or
+                                      not validate_packing(child,tolerance=0.0).valid):
+                child=None
+            return child, {'operator':'custom_coordinated_structural_mutation'}, None
         if learning_controller is not None:
             parent_policy=learning_policies.get(parent_id)
             if parent_policy is None:
                 parent_policy=learning_controller.new_policy()
-            raw,meta=propose_learned(parent,rng,cfg.initial_container_side,
+            raw,meta=propose_learned(parent,rng,exploration_side_cap,
                                      parent_policy,learning_controller)
             child=raw
             improvement_from_compression=0.0
             if raw is not None:
-                child,compressed_meta=compress_valid(raw,rng,compression_settings,cfg.initial_container_side)
+                child,compressed_meta=compress_valid(raw,rng,compression_settings,exploration_side_cap)
                 compression_trials+=compressed_meta["compression_trials"]
                 compression_moves+=compressed_meta["compression_accepted"]
                 improvement_from_compression=raw.container_side-child.container_side
@@ -179,17 +241,17 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             meta["learning_feedback"]=feedback
             return child,meta,inherited
         if coordinated_controller is not None:
-            child,meta=mutate_coordinated(parent,rng,cfg.initial_container_side,coordinated_controller)
+            child,meta=mutate_coordinated(parent,rng,exploration_side_cap,coordinated_controller)
             if compression and child is not None:
-                child,compressed_meta=compress_valid(child,rng,compression_settings,cfg.initial_container_side)
+                child,compressed_meta=compress_valid(child,rng,compression_settings,exploration_side_cap)
                 compression_trials+=compressed_meta["compression_trials"]
                 compression_moves+=compressed_meta["compression_accepted"]
                 meta["local_compression"]=compressed_meta
             return child,meta,None
         if adaptive_controller is not None:
-            child,meta=mutate_adaptive(parent,rng,cfg.initial_container_side,adaptive_controller)
+            child,meta=mutate_adaptive(parent,rng,exploration_side_cap,adaptive_controller)
             return child,meta,None
-        return mutate(parent,rng,cfg.initial_container_side),None,None
+        return mutate(parent,rng,exploration_side_cap),None,None
     base=grid_baseline(cfg.n_squares)
     if cfg.initial_container_side+1e-12<base.container_side:
         raise ValueError("Initial container is smaller than grid baseline")
@@ -214,7 +276,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         if recorder:
             recorder.append("individuals.jsonl",{
                 "individual_id":uid,"generation_created":generation,
-                "parent_ids":[] if parent_id is None else [parent_id],
+                "parent_ids":([] if parent_id is None else [parent_id]) +
+                    (mutation.get("additional_parent_ids",[]) if isinstance(mutation,dict) else []),
                 "origin":origin,"valid":valid,
                 "rejected_reason":None if valid else "invalid_or_failed_mutation",
                 "container_side":packing.container_side if valid else None,
@@ -223,11 +286,22 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 "recorded_at":utc_now()
             })
         return (uid,packing) if valid else None
-    initial=verified(base.squares)
-    assert initial is not None
+    # A user-supplied packing has already been validated above. Keep its exact
+    # coordinates and bounding side: rebasing a nearly touching valid packing
+    # can introduce round-off penetration and must not silently reject it.
+    initial=initial_seed if initial_seed is not None else verified(base.squares)
+    if initial is None:
+        raise ValueError("Generated baseline packing failed strict geometry validation")
     seed=propose(initial,0,None,"seed")
     assert seed is not None
     parents=[seed]
+    # Additional independent founder geometries are recorded as genuine seeds
+    # before ordinary generation-zero random mutations. Not selected by name.
+    for candidate in initial_seeds:
+        extra=propose(candidate,0,None,"geometry_seed")
+        if extra is None:
+            raise ValueError("Previously verified geometry seed became invalid")
+        parents.append(extra)
     while len(parents)<cfg.initial_population and evaluations<cfg.max_evaluations:
         parent_id,parent=rng.choice(parents) if cfg.initialization_source=="grid_mutations" else parents[0]
         child, mutation_meta, learned_policy=make_child(parent,parent_id)
@@ -243,7 +317,16 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
     def snapshot(gen:int, children:int):
         unique_ids=len(set(i for i,_ in parents))
         population_best=min(p.container_side for _,p in parents)
-        value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,children)
+        rotated=sum(any(abs(math.sin(2*sq.angle))>1e-6 for sq in p.squares)
+                    for _,p in parents)
+        unique_poses=[]
+        for _,p in parents:
+            if not any(abs(p.container_side-q.container_side)<1e-8 and
+                       packing_distance(p,q)<1e-7 for q in unique_poses):
+                unique_poses.append(p)
+        value=Generation(gen,evaluations,best.container_side,population_best,unique_ids,
+                         children,rotated,max(p.container_side for _,p in parents),
+                         len(unique_poses),historical_jumps)
         if recorder:
             recorder.append("generations.jsonl",{
                 **asdict(value),"selected_ids":[i for i,_ in parents],
@@ -251,11 +334,20 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 "learning_global_probability":learning_controller.probabilities(learning_controller.new_policy(),learning_controller.context(best)) if learning_controller is not None else None,
                 "elapsed_seconds":time.perf_counter()-clock
             })
-            recorder.image(gen,parents,cfg.initial_container_side)
+            if gen == 0 or gen % image_every == 0 or gen == cfg.max_generations:
+                recorder.image(gen,parents,cfg.initial_container_side)
+        if progress_callback is not None:
+            progress_callback(value)
         return value
+    # Archive actual past parent genomes, including their generation and identity.
+    # Historical revival is optional and does not alter existing runs by default.
+    if historical_jump_every:
+        historical_founders=tuple((uid,p,0) for uid,p in parents)
+        historical_archive.extend(historical_founders)
     history=[snapshot(0,0)]
     stop_reason="max_generations"
     for gen in range(1,cfg.max_generations+1):
+        current_generation=gen
         if evaluations>=cfg.max_evaluations:
             stop_reason="max_evaluations"
             break
@@ -281,6 +373,37 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         current_id,current=min(parents,key=lambda item:item[1].container_side)
         if current.container_side<best.container_side:
             best,best_id=current,current_id
+            last_improvement_generation=gen
+        if historical_jump_every and gen % historical_jump_every == 0:
+            idle=gen-last_improvement_generation
+            if idle >= historical_stagnation_after and historical_archive:
+                # Revive one genuinely older individual, replacing a survivor,
+                # while always retaining the current best solution.
+                eligible=[item for item in (*historical_founders,*historical_archive)
+                          if item[2] <= gen-historical_jump_every and
+                          packing_distance(item[1],best)>1e-7]
+                if eligible:
+                    source_id,source,source_gen=rng.choice(eligible)
+                    revived=propose(source,gen,source_id,'historical_jump',
+                                    {'operator':'historical_jump',
+                                     'archived_generation':source_gen,
+                                     'archived_individual_id':source_id})
+                    if revived is not None:
+                        replace_at=max((i for i,(uid,p) in enumerate(parents)
+                                        if uid != best_id),
+                                       key=lambda i: parents[i][1].container_side,
+                                       default=None)
+                        if replace_at is not None:
+                            parents[replace_at]=revived
+                            historical_jumps+=1
+                            if recorder:
+                                recorder.append('selection.jsonl',{
+                                    'generation':gen,'individual_id':revived[0],
+                                    'selected':True,'reason':'historical_archive_revival',
+                                    'side':revived[1].container_side})
+            historical_archive.extend((uid,p,gen) for uid,p in parents)
+            if len(historical_archive)>historical_archive_limit:
+                historical_archive=historical_archive[-historical_archive_limit:]
         if recorder:
             selected_ids={i for i,_ in parents}
             for uid,p in pool:
@@ -315,7 +438,18 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             "learning_controller":learning_controller.snapshot() if learning_controller is not None else None,
             "compression_enabled":(compression or learning),
             "compression_trials":compression_trials,
-            "compression_accepted_moves":compression_moves
+            "compression_accepted_moves":compression_moves,
+            "custom_initial_seed":initial_seed is not None,
+            "additional_initial_seeds":len(initial_seeds),
+            "multi_parent_probability":multi_parent_probability,
+            "structural_operator_proposals":structural_proposals,
+            "structural_operator_probability":structural_probability if structural_mutator is not None else 0.0,
+            "population_image_every":image_every,
+            "exploration_side_cap":exploration_side_cap,
+            "historical_jump_every":historical_jump_every,
+            "historical_jumps":historical_jumps,
+            "historical_archive_size":len(historical_archive),
+            "historical_stagnation_after":historical_stagnation_after
         })
         if learning_controller is not None:
             recorder.write("selected_population_final.json",{

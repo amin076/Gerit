@@ -1,0 +1,37 @@
+name: Gerit new geometry 50-generation pilot
+
+on:
+  push:
+    branches: [feature/five-square-corner-center]
+    paths:
+      - .github/workflows/gerit-cluster-50-pilot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fifty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - name: Sequential 50 generations N17 N18 N19 with 8 parents and 2 children each
+        run: |
+          python -u scripts/run_symmetry_three_counts.py \
+            --generations 50 --parents 8 --offspring-per-parent 2 \
+            --report-every 10 --image-every 25 \
+            --out-root results/cluster-50-pilot
+      - name: Verify all 150 generations and strict final checks
+        run: |
+          python -c "import json,pathlib; p=pathlib.Path('results/cluster-50-pilot'); j=json.loads((p/'sequential_summary.json').read_text()); assert j['status']=='completed'; assert [r['n'] for r in j['completed']]==[17,18,19]; assert all(r['generations']==50 and r['independent_validation'] in ('certified interval SAT','certified exact grid') and 'operator_stats' in r for r in j['completed']); print('PASS FIFTY',[(x['n'],x['best_L'],x['best_founder_L']) for x in j['completed']])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cluster-50-pilot-results
+          path: results/cluster-50-pilot/
+          if-no-files-found: warn
