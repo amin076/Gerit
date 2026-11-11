@@ -122,7 +122,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, progress_callback=None) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -290,6 +290,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                     "side":p.container_side
                 })
         history.append(snapshot(gen,len(proposals)))
+        if progress_callback is not None:
+            progress_callback(history[-1])
         if evaluations>=cfg.max_evaluations:
             stop_reason="max_evaluations"
             break
