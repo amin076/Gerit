@@ -31,6 +31,9 @@ def run_one(family,n,*,registry,ledger,output_dir,seed,iterations,
     run_id=(f"family-{family}-n{n}-s{seed}-i{iterations}-r{release:g}")
     report_dir=Path(output_dir)
     report_dir.mkdir(parents=True,exist_ok=True)
+    dest=report_dir/f"{run_id}.json"
+    if dest.exists():
+        raise FileExistsError(f"Refusing to overwrite historical report: {dest}")
 
     def progress(iteration,best,valid):
         print(f"FAMILY={family} N={n} STEP={iteration}/{iterations} "
@@ -73,9 +76,6 @@ def run_one(family,n,*,registry,ledger,output_dir,seed,iterations,
         "initial_side":result.initial_side,
         "squares":[asdict(s) for s in best.squares],
     }
-    dest=report_dir/f"{run_id}.json"
-    if dest.exists():
-        raise FileExistsError(f"Refusing to overwrite historical report: {dest}")
     dest.write_text(json.dumps(metadata,indent=2)+"\n",encoding="utf-8")
     record_attempt(
         ledger,n=n,family=family,
