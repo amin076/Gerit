@@ -49,8 +49,15 @@ def l_frame_extend(source: Packing, *, clearance: float = 1e-6) -> Packing:
     # contacts after float serialization may be uncertifiable with interval
     # SAT, even though the standard float SAT says the layout is valid.
     new_edge = side + 0.5 + clearance
-    additional = [Square(i+0.5, new_edge, 0.0) for i in range(k)]
-    additional += [Square(new_edge, i+0.5, 0.0) for i in range(k)]
+    # The precision validator also rejects exactly touching *adjacent
+    # strip squares*, not only contact with the old packing. Borrow a
+    # small fraction of the slack L-floor(L) to separate each square.
+    fractional_slack = max(0.0, side-k)
+    strip_gap = min(clearance, fractional_slack/(2*max(1,k)))
+    additional = [Square(i+0.5+i*strip_gap, new_edge, 0.0)
+                  for i in range(k)]
+    additional += [Square(new_edge, i+0.5+i*strip_gap, 0.0)
+                   for i in range(k)]
     additional.append(Square(new_edge, new_edge, 0.0))
     return minimum_bounding_square((*base.squares, *additional))
 
