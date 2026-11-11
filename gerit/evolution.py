@@ -193,9 +193,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         nonlocal compression_trials,compression_moves,structural_proposals
         # Optional two-parent geometry hook. Parent selection/survival
         # and the historical archive remain completely unchanged.
-        roll=rng.random() if current_generation > 0 else 1.0
+        roll=rng.random() if (current_generation > 0 and multi_parent_mutator is not None) else None
         if (current_generation > 0 and multi_parent_mutator is not None and
-                roll < multi_parent_probability and len(parents)>1):
+                roll is not None and roll < multi_parent_probability and len(parents)>1):
             mates=[(uid,p) for uid,p in parents if uid!=parent_id]
             if mates:
                 mate_id,mate=rng.choice(mates)
@@ -207,7 +207,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
                 return child, {'operator':'multi_parent_geometry_crossover',
                                'additional_parent_ids':[mate_id]}, None
         if (current_generation > 0 and structural_mutator is not None and
-                roll < structural_probability+multi_parent_probability):
+                (rng.random() < structural_probability if roll is None else
+                 roll < structural_probability+multi_parent_probability)):
             structural_proposals+=1
             child=structural_mutator(parent,rng)
             if child is not None and (len(child.squares)!=cfg.n_squares or
