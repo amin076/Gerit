@@ -122,7 +122,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, progress_callback=None) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, progress_callback=None, initial_packing: Packing | None = None) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -190,7 +190,9 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
             child,meta=mutate_adaptive(parent,rng,cfg.initial_container_side,adaptive_controller)
             return child,meta,None
         return mutate(parent,rng,cfg.initial_container_side),None,None
-    base=grid_baseline(cfg.n_squares)
+    base=initial_packing if initial_packing is not None else grid_baseline(cfg.n_squares)
+    if len(base.squares) != cfg.n_squares or not validate_packing(base, tolerance=0.0).valid:
+        raise ValueError("Initial packing is invalid or has the wrong square count")
     if cfg.initial_container_side+1e-12<base.container_side:
         raise ValueError("Initial container is smaller than grid baseline")
     recorder=RunRecorder(output_dir,{**asdict(cfg),"adaptive_enabled":adaptive,"coordinated_enabled":coordinated,"compression_enabled":(compression or learning),"learning_enabled":learning},image_columns) if output_dir else None
