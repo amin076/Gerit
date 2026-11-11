@@ -187,3 +187,57 @@ def multi_parent_quadrant_crossover(first: Packing, second: Packing,
         values[i]=Square(b.x*factor,b.y*factor,b.angle)
     candidate=_valid(values)
     return candidate if candidate is not None and candidate.container_side<=side_cap+1e-9 else None
+
+def propose_symmetry_group_move(parent: Packing, rng: random.Random,
+                                side_cap: float, *, attempts: int = 40) -> Packing | None:
+    """Mutation proposal that inherits a parent's squares in symmetry-related groups.
+
+    Uses the parent layout (not a fresh template). Approximate counterpart
+    matching allows imperfect symmetry. Every mutated square can translate and
+    rotate, and all results pass strict geometry validation.
+    """
+    if len(parent.squares)<2 or not validate_packing(parent,tolerance=0.0).valid:
+        return None
+    n=len(parent.squares)
+    center=parent.container_side/2
+    def counterpart(point, kind):
+        x,y=point
+        if kind=="half_turn":
+            return (2*center-x, 2*center-y)
+        if kind=="horizontal":
+            return (x,2*center-y)
+        if kind=="vertical":
+            return (2*center-x,y)
+        return (2*center-y,x)
+    for _ in range(attempts):
+        kind=rng.choice(("half_turn","horizontal","vertical","quarter_turn"))
+        origin=rng.randrange(n)
+        seed=parent.squares[origin]
+        tx,ty=counterpart((seed.x,seed.y),kind)
+        partner=min((j for j in range(n) if j!=origin),
+                    key=lambda j:(parent.squares[j].x-tx)**2+
+                                 (parent.squares[j].y-ty)**2)
+        if (parent.squares[partner].x-tx)**2+(parent.squares[partner].y-ty)**2 > .12:
+            continue
+        # Symmetry equivariance: reflected moves flip the corresponding axis;
+        # a quarter-turn rotates both the displacement and orientation.
+        scale=rng.choice((.006,.025,.07,.16))
+        dx=rng.gauss(0.,scale)
+        dy=rng.gauss(0.,scale)
+        da=rng.gauss(0.,scale*.35)
+        if kind=="half_turn":
+            ox,oy,oa=-dx,-dy,da
+        elif kind=="horizontal":
+            ox,oy,oa=dx,-dy,-da
+        elif kind=="vertical":
+            ox,oy,oa=-dx,dy,-da
+        else:
+            ox,oy,oa=-dy,dx,da
+        values=list(parent.squares)
+        values[origin]=Square(seed.x+dx,seed.y+dy,seed.angle+da)
+        other=parent.squares[partner]
+        values[partner]=Square(other.x+ox,other.y+oy,other.angle+oa)
+        proposal=_valid(values)
+        if proposal is not None and proposal.container_side<=side_cap+1e-9:
+            return proposal
+    return None
