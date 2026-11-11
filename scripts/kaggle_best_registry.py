@@ -86,6 +86,13 @@ def propose_improvement(path, candidate, *, source, experiment_id,
     if not source or not experiment_id:
         raise ValueError("source and experiment_id required")
     n, new_side = _validate_solution(candidate)
+    # Independent interval geometry audit already present in Gerit.
+    from gerit.kaggle import Candidate, validate as independent_validate
+    poses = tuple((repr(float(p["x"])), repr(float(p["y"])),
+                   repr(float(p["angle"]))) for p in candidate["squares"])
+    independent = independent_validate(Candidate(n, poses, source, new_side))
+    if not independent.valid:
+        raise ValueError(f"Independent geometry rejected update: {independent.reason}")
     bank = read_registry(path)
     old = bank["problems"][str(n)]
     old_side = float(old["side"])
@@ -102,7 +109,7 @@ def propose_improvement(path, candidate, *, source, experiment_id,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "previous_best_side": old_side,
         "validated": True,
-        "validation": {"method": "gerit.geometry.validate_packing", "valid": True},
+        "validation": {"method": "strict SAT and interval SAT", "valid": True, "independent_reason": independent.reason},
         "baseline_improvement": float(old["baseline_side"]) - new_side,
         "improvement_from_previous": old_side - new_side,
         "score_contribution": new_side / math.sqrt(n) - 1.0,
