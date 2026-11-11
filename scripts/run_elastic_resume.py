@@ -51,10 +51,6 @@ def _perturb(pose,diag,rng,scale,group_size):
     hot=set()
     for i,j,depth in diag["worst_pairs"]:
         hot.update((i,j))
-    ext=.5*(np.abs(np.sin(new[:,2]))+np.abs(np.cos(new[:,2])))
-    indices=np.where((new[:,0]<ext)|(new[:,1]<ext)|
-                     (new[:,0]>new._cap-ext)|
-                     (new[:,1]>new._cap-ext))[0] if False else []
     # Prefer affected neighbors, but allow long-range escape jumps.
     if rng.random()<.75 and hot:
         idx=list(hot)
