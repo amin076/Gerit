@@ -61,3 +61,21 @@ if the workflow succeeds. It never overwrites the user's local archive.
 Do not submit anything to Kaggle until a full independently certified
 registry export exists and the expected score is compared to the prior
 official 28.0771285749 (if Kaggle accepted that submission).
+
+## Confirmed first pilot (CI 43072644094)
+
+GitHub Actions:
+https://github.com/amin076/Gerit/actions/runs/43072644094
+
+- Full CI conclusion: **success**.
+- Founder: validated N226 packing, L=15.707120181187.
+- N227 starting bank side: 16.0 (grid).
+- 16 starts, seed 100, 400 iterations per penalty stage.
+- Independently interval-SAT-certified N227 improvement discovered on attempt 3.
+- New certified N227 side: **15.989307680427**.
+- Bank improved problems: **30 -> 31**.
+- Total projected score: **28.077128574900 -> 28.076418900724**.
+- An independently reimported and verified complete 500,500-row Kaggle CSV was produced.
+- These are results from a disposable CI registry, not mutations of the local Windows bank.
+- Improvement is mathematically feasible as checked, but no global optimality claim.
+- N228 and N229 remain separate experiments; run after synchronizing and applying N227 locally.
