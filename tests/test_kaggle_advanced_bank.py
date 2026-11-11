@@ -12,7 +12,7 @@ from gerit.config import RunConfig
 from gerit.evolution import evolve
 from scripts.build_kaggle_grid_bank import grid_solution
 from scripts.kaggle_best_registry import initialize_registry
-from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder, released_rotation_founder, expanded_founder
+from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder, independent_founders, released_rotation_founder, expanded_founder
 from gerit.evolution import packing_distance
 
 
@@ -58,6 +58,24 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
             self.assertEqual(label, "released_rotations")
             self.assertTrue(any(abs(math.sin(2 * sq.angle)) > 1e-6
                                 for sq in second.squares))
+
+    def test_six_independent_founders_small_n(self):
+        for n in (8, 12, 14):
+            first = fresh_founder(n, "auto", random.Random(n))
+            extras = independent_founders(n, first, 9000 + n, 5)
+            self.assertGreaterEqual(len(extras), 2)
+            packings = [first] + [packing for _, packing in extras]
+            for p in packings:
+                self.assertEqual(len(p.squares), n)
+                self.assertTrue(validate_packing(p, tolerance=0.0).valid)
+            for i, a in enumerate(packings):
+                for b in packings[i + 1:]:
+                    self.assertGreater(packing_distance(a, b), 1e-7)
+
+    def test_founder_count_does_not_exceed_requested(self):
+        first = grid_baseline(10)
+        self.assertEqual(independent_founders(10, first, 17, 0), [])
+        self.assertLessEqual(len(independent_founders(10, first, 17, 3)), 3)
 
     def test_second_founder_is_not_a_copy(self):
         first = fresh_founder(5, "auto", random.Random(9))
