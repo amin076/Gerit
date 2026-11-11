@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 from gerit.config import load_config
 from gerit.evolution import evolve
-from gerit.geometry import Packing, Square, grid_baseline, validate_packing
+from gerit.geometry import Packing, Square, grid_baseline, minimum_bounding_square, validate_packing
 from gerit.symmetry_operators import multi_parent_quadrant_crossover, geometry_seed_bank
 from gerit.evolution import packing_distance
 from gerit.kaggle import Candidate, validate as interval_validate
@@ -59,9 +59,37 @@ def fresh_founder(n, kind, rng):
 
 
 
+def released_rotation_founder(first, seed):
+    """Make a valid rotated exploratory parent by releasing an existing layout."""
+    rng = random.Random(seed)
+    n = len(first.squares)
+    k = math.isqrt(n - 1) + 1
+    gap = min(0.18, 0.6 / max(1, k - 1))
+    cx = sum(sq.x for sq in first.squares) / n
+    cy = sum(sq.y for sq in first.squares) / n
+    for factor in (1 + gap, 1 + gap * 1.35, 1 + gap * 1.75):
+        for _ in range(8):
+            poses = tuple(Square(
+                cx + (sq.x - cx) * factor,
+                cy + (sq.y - cy) * factor,
+                sq.angle + rng.uniform(-gap * 0.30, gap * 0.30),
+            ) for sq in first.squares)
+            rotated = minimum_bounding_square(poses)
+            if (rotated.container_side <= max(grid_baseline(n).container_side,
+                                              first.container_side) + 0.75
+                    and validate_packing(rotated, tolerance=0.0).valid
+                    and any(abs(math.sin(2 * sq.angle)) > 1e-6
+                            for sq in rotated.squares)):
+                return rotated
+    return None
+
+
 def independent_founder(n, first, seed):
     """Choose an existing independent geometry with real structural difference."""
     options = geometry_seed_bank(n, seed, copies=2)
+    rotated = released_rotation_founder(first, seed + 7331)
+    if rotated is not None:
+        options.append(("released_rotations", rotated))
     eligible = []
     for name, packing in options:
         if packing is None or len(packing.squares) != n:
@@ -70,10 +98,13 @@ def independent_founder(n, first, seed):
             continue
         distance = packing_distance(first, packing)
         if distance > 1e-7:
-            eligible.append((distance, name, packing))
+            rotated_count = sum(abs(math.sin(2 * sq.angle)) > 1e-6
+                                for sq in packing.squares)
+            eligible.append((rotated_count > 0, rotated_count,
+                             -packing.container_side, distance, name, packing))
     if not eligible:
         return None, None
-    _, name, packing = max(eligible, key=lambda t: t[0])
+    *_, name, packing = max(eligible)
     return name, packing
 
 def structural_move(parent, rng, cap):
