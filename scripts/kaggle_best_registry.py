@@ -25,7 +25,7 @@ def _validate_solution(record):
     squares = [Square(float(p["x"]), float(p["y"]), float(p["angle"]))
                for p in record["squares"]]
     packing = Packing(tuple(squares), side)
-    result = validate_packing(packing)
+    result = validate_packing(packing, tolerance=0.0)
     if not result.valid:
         raise ValueError(f"invalid packing: {result}")
     return n, side
