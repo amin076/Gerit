@@ -177,6 +177,19 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         "resumed_from":resumed_from,"method":FAMILY})
     certified=0
     updates=0
+    # A previous dry-run's verified best can be registered immediately:
+    # no need to repeat a costly 900-generation search just to apply it.
+    if apply and best.container_side<current_registry_side-1e-10:
+        offer=propose_improvement(
+            registry,_packing_record(best),
+            source="gerit_deep_elastic_compression",
+            experiment_id=f"deep-elastic-n{n}-s{seed}-resume-certified",
+            generation=0,operator=FAMILY)
+        if offer["accepted"]:
+            current_registry_side=best.container_side
+            updates+=1
+            print(f"RESTORED_CERTIFIED N={n} "
+                  f"new_L={best.container_side:.12f}",flush=True)
     nearest_changes=0
     history=[]
     # Keep several valid historical elites for exploration rather than
