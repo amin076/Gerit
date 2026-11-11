@@ -29,6 +29,7 @@ from gerit.packing_geometry_moves import propose_pivot_release
 from gerit.adaptive_v3 import propose_reconfigure
 from gerit.contact_relocation import propose_contact_relocate
 from scripts.kaggle_best_registry import read_registry, propose_improvement
+from scripts.audit_kaggle_symmetry import evaluate_one as audit_symmetries, symmetry_candidates
 
 
 def from_registry(entry):
@@ -209,6 +210,17 @@ def run_one(n, args, bank):
     old = bank["problems"][str(n)]
     rng = random.Random(args.seed + n)
     raw_fresh = fresh_founder(n, args.founder, rng)
+    # When enabled, start independent exploration from the best discovered
+    # geometry family, not necessarily a grid or any stored registry winner.
+    # All family candidates are screened in a separate preflight step.
+    if args.start == "fresh" and args.symmetry_audit and args.founder == "auto":
+        choices = symmetry_candidates(n, args.seed + n, args.symmetry_copies)
+        if choices:
+            family, selected = min(choices, key=lambda pair: pair[1].container_side)
+            if selected.container_side < raw_fresh.container_side - 1e-10:
+                raw_fresh = selected
+                print(f"FOUNDER N={n} family={family} "
+                      f"L={selected.container_side:.12f}", flush=True)
     fresh = (expanded_founder(raw_fresh, args.initial_release)
              if args.start == "fresh" else raw_fresh)
     archive = from_registry(old) if args.start in ("stored", "mixed") else None
@@ -336,6 +348,9 @@ def main():
     p.add_argument("--offspring", type=int, default=5)
     p.add_argument("--founder-count", type=int, default=6,
                    help="Distinct independently constructed initial founders; remainder are engine-generated")
+    p.add_argument("--symmetry-audit", action=argparse.BooleanOptionalAction,
+                   default=True, help="Evaluate ALL existing symmetry families and offer archive improvements before evolution")
+    p.add_argument("--symmetry-copies", type=int, default=3)
     p.add_argument("--diverse-founders", action=argparse.BooleanOptionalAction,
                    default=True, help="Seed a second independent geometry when starting fresh")
     p.add_argument("--seed", type=int, default=20261111)
@@ -354,6 +369,7 @@ def main():
             or any(not 1 <= n <= 1000 for n in a.counts)
             or a.parents < 2 or a.generations < 1 or a.offspring < 1
             or not 1 <= a.founder_count <= a.parents
+            or a.symmetry_copies < 1
             or a.report_every < 1 or a.image_every < 1
             or not math.isfinite(a.exploration_extra) or a.exploration_extra < 0
             or not math.isfinite(a.initial_release) or a.initial_release < 0
@@ -368,7 +384,15 @@ def main():
         if math.isqrt(n) ** 2 == n:
             print(f"SKIP N={n}: exact grid already area-optimal", flush=True)
             continue
-        # Re-read registry before each run to pick up earlier accepted results.
+        # Evaluate every original symmetry family before the evolutionary
+        # experiment. The founder selector cannot censor better family poses
+        # merely because the population has only six available founder slots.
+        if a.symmetry_audit:
+            audit_symmetries(
+                n, a.seed + n, a.symmetry_copies, a.registry,
+                apply=True,
+                output_dir=Path(a.output_root) / "symmetry_preflight")
+        # Only after the independent audit do we choose founders and evolve.
         run_one(n, a, read_registry(a.registry))
     print("BATCH FINISHED", flush=True)
 
