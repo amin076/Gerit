@@ -6,10 +6,12 @@ on:
     paths:
       - gerit/symmetry_operators.py
       - gerit/cluster_geometry_operators.py
+      - gerit/x_core_geometry.py
       - gerit/evolution.py
       - scripts/run_symmetry_three_counts.py
       - tests/test_symmetry_operators.py
       - tests/test_cluster_geometry_operators.py
+      - tests/test_x_core_geometry.py
       - .github/workflows/gerit-symmetry-multiparent.yml
   workflow_dispatch:
 
@@ -30,8 +32,9 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_symmetry_operators.py -v
           python -m unittest discover -s tests -p test_cluster_geometry_operators.py -v
+          python -m unittest discover -s tests -p test_x_core_geometry.py -v
       - name: Syntax check
-        run: python -m py_compile gerit/evolution.py gerit/symmetry_operators.py gerit/cluster_geometry_operators.py scripts/run_symmetry_three_counts.py
+        run: python -m py_compile gerit/evolution.py gerit/symmetry_operators.py gerit/cluster_geometry_operators.py gerit/x_core_geometry.py scripts/run_symmetry_three_counts.py
 
   actual-run:
     runs-on: ubuntu-latest
