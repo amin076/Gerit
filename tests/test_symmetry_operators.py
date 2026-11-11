@@ -11,7 +11,8 @@ from gerit.config import load_config
 from gerit.evolution import evolve
 from gerit.geometry import grid_baseline, validate_packing
 from gerit.symmetry_operators import (OPERATORS, geometry_seed_bank,
-    four_corner_cluster_seed, multi_parent_quadrant_crossover)
+    four_corner_cluster_seed, multi_parent_quadrant_crossover,
+    propose_symmetry_group_move)
 from scripts.run_symmetry_three_counts import prepare_founders
 
 
@@ -36,6 +37,13 @@ class SymmetryExperimentTests(unittest.TestCase):
         self.assertTrue(any(name=='four_corner_clusters' and p.container_side<5
                             for name,p in founders))
         self.assertTrue(all(validate_packing(p,tolerance=0).valid for _,p in founders))
+
+    def test_symmetry_offspring_operator_never_returns_invalid(self):
+        base=grid_baseline(17)
+        p=propose_symmetry_group_move(base,random.Random(23),5.8,attempts=60)
+        if p is not None:
+            self.assertTrue(validate_packing(p,tolerance=0).valid)
+            self.assertLessEqual(p.container_side,5.8)
 
     def test_two_parent_hook_and_audited_ancestry(self):
         first=grid_baseline(17)
