@@ -44,3 +44,29 @@ validation and population distance calculations. Start with small N. Avoid
 running this configuration across all 1,000 sizes until scalability is measured.
 
 Every run now starts from the **validated stored champion** as its initial parent. The evolving population and its learned policies are not yet resumed from a previous run; this is not a full evolutionary checkpoint/resume mechanism.
+
+## Recover validated five-square research (before another screening)
+
+The baseline registry may contain only L=3 while earlier local experiments
+have a better full packing. Recover real coordinates, not an approximate L:
+
+```cmd
+py -3 scripts/import_gerit_history.py --root results --n 5
+py -3 scripts/import_gerit_history.py --root results --n 5 --apply
+py -3 scripts/kaggle_best_registry.py status
+```
+
+If the dry-run finds no valid coordinates, do not use --apply. Check whether
+the historical results live elsewhere or under unsupported filenames.
+Only `best_result.json`, `best.json`, `run_result.json`,
+`final_result.json` and `selected_population_final.json` are scanned.
+The importer validates all square coordinates and strict collision/bounds
+geometry; it never fabricates a packing from a reported side length.
+
+Once imported, a **new unique seed** in screening starts from the stored
+champion. Do not rerun the same experiment identifier because result files
+are intentionally not overwritten.
+
+```cmd
+py -3 -m unittest tests.test_import_gerit_history tests.test_kaggle_screening -v
+```
