@@ -48,7 +48,14 @@ def x_core_five_plus_twelve_seed(n: int, rng: random.Random | None = None,
         c,s=math.cos(theta),math.sin(theta)
         for x,y in group:
             pose.append(Square(x*c-y*s,x*s+y*c,0.))
-    packing=minimum_bounding_square(pose)
+    # minimum_bounding_square rebases coordinates to zero. At zero SAT
+    # tolerance, floating-point subtraction can place a boundary vertex
+    # at -2e-16 even for exact analytic inside geometry. A microscopic
+    # padding protects strict containment without hiding any collision.
+    raw=minimum_bounding_square(pose)
+    pad=1e-9
+    packing=Packing(tuple(Square(s.x+pad,s.y+pad,s.angle) for s in raw.squares),
+                    raw.container_side+2*pad)
     if len(packing.squares)!=17 or not validate_packing(packing,tolerance=0.).valid:
         raise ValueError("X-core arrangement unexpectedly violates strict SAT")
     return packing
