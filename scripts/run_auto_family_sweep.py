@@ -221,14 +221,21 @@ def run(*,registry,output_dir,first=231,max_n=1000,
                 "growth_certified":growth_p is not None}
         state["results"].append(result)
         state["next_index"]=index+1
+        latest=read_registry(registry)
+        state["projected_score"]=float(latest["total_score"])+math.fsum(
+            (min(entry["best_side"],float(latest["problems"][str(entry["n"])]["side"]))
+             -float(latest["problems"][str(entry["n"])]["side"]))/
+            math.sqrt(entry["n"]) for entry in state["results"])
         _save_json(checkpoint,state)
         print(f"END_SWEEP N={n} best_L={best.container_side:.12f} "
               f"better={result['better']} applied={accepted} "
+              f"projected_score={state['projected_score']:.12f} "
               f"completed={index+1}/{len(targets)}",flush=True)
     result={"completed":len(state["results"]),"improved":sum(
                 item["better"] for item in state["results"]),
             "registered":sum(item["registered"] for item in state["results"]),
-            "remaining":0,"score":read_registry(registry)["total_score"]}
+            "remaining":0,"score":read_registry(registry)["total_score"],
+            "projected_score":state.get("projected_score")}
     print(f"FINISHED_SWEEP {result}",flush=True)
     return result
 
