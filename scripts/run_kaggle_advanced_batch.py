@@ -157,8 +157,11 @@ def independent_founders(n, primary, seed, max_additional):
             bank.append((name + "_rotated", rotated))
     selected = [("primary", primary)]
     available = []
+    founder_side_limit = max(grid_baseline(n).container_side,
+                             primary.container_side) + 0.8
     for name, p in bank:
         if (p is None or len(p.squares) != n
+                or p.container_side > founder_side_limit
                 or not validate_packing(p, tolerance=0.0).valid):
             continue
         if any(packing_distance(p, chosen) <= 1e-7 for _, chosen in selected):
