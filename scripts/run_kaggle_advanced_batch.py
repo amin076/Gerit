@@ -41,10 +41,13 @@ def from_registry(entry):
 
 def fresh_founder(n, kind, rng):
     """Use original Gerit geometrical founders, never copy a benchmark."""
-    if kind == "corner-center" and n == 5:
-        from experiments.five_squares.optimizer import corner_center_seed
-        return corner_center_seed()
-    if kind == "symmetry":
+    if n == 5 and kind in ("auto", "corner-center"):
+        # Use the old analytic corner/center geometry (45 degree center).
+        # This is a founder, never a restriction on future rotations.
+        from experiments.five_squares.optimizer import best_inward_for_angle
+        candidate, _ = best_inward_for_angle(math.pi / 4)
+        return candidate
+    if kind in ("symmetry", "auto"):
         from gerit.symmetry_operators import fourfold_seed, diagonal_pairs_seed, corner_first_seed
         strategies = (fourfold_seed, diagonal_pairs_seed, corner_first_seed)
         candidate = strategies[rng.randrange(len(strategies))](n, rng)
@@ -149,12 +152,12 @@ def run_one(n, args, bank):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--counts", nargs="+", type=int, default=[5, 8, 17])
+    p.add_argument("--counts", nargs="+", type=int, default=[6, 7, 8, 10])
     p.add_argument("--registry", default="results/kaggle_baseline/best_registry.json")
     p.add_argument("--start", choices=("fresh", "stored", "mixed"), default="fresh",
                    help="Registry is archival by default and NOT a mandatory founder")
     p.add_argument("--founder", choices=("auto", "corner-center", "symmetry"),
-                   default="symmetry")
+                   default="auto")
     p.add_argument("--generations", type=int, default=50)
     p.add_argument("--parents", type=int, default=2)
     p.add_argument("--offspring", type=int, default=5)
