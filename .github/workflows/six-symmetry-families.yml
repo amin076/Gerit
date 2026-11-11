@@ -1,0 +1,58 @@
+name: Gerit six symmetry families
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "gerit/symmetry_family_search.py"
+      - "scripts/run_symmetry_family.py"
+      - "scripts/run_*_family.py"
+      - "scripts/kaggle_method_ledger.py"
+      - "tests/test_symmetry_family_runner.py"
+      - ".github/workflows/six-symmetry-families.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  six-families:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Six-family and provenance regression checks
+        run: python -m unittest tests.test_symmetry_family_runner -v
+      - name: Create isolated registry for real family experiments
+        run: python scripts/kaggle_best_registry.py --registry results/ci_six_family_bank.json init
+      - name: Family 1 - fourfold
+        run: python scripts/run_fourfold_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Family 2 - vertical reflection
+        run: python scripts/run_vertical_reflection_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Family 3 - horizontal reflection
+        run: python scripts/run_horizontal_reflection_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Family 4 - diagonal pairs
+        run: python scripts/run_diagonal_pairs_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Family 5 - corner clusters
+        run: python scripts/run_corner_cluster_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Family 6 - three plus one
+        run: python scripts/run_three_plus_one_family.py --counts 5 8 10 11 12 14 17 18 19 20 --iterations 80 --seed 20261112 --registry results/ci_six_family_bank.json --ledger results/ci_six_family_ledger.jsonl --output-dir results/ci_six_family_reports --summary results/ci_six_family_summary.csv --apply
+      - name: Print bank improvements
+        run: python scripts/kaggle_best_registry.py --registry results/ci_six_family_bank.json status
+      - name: Preserve full method provenance and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-six-families-method-ledger
+          path: |
+            results/ci_six_family_reports/
+            results/ci_six_family_ledger.jsonl
+            results/ci_six_family_summary.csv
+            results/ci_six_family_bank.json
+          if-no-files-found: warn
+          retention-days: 30
