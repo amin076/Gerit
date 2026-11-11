@@ -38,15 +38,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -r requirements.txt
-      - name: Run three Ns sequentially for two real generations
+      - name: Run three Ns sequentially for ten real generations
         run: |
           python -u scripts/run_symmetry_three_counts.py \
-            --generations 2 --parents 8 --offspring-per-parent 1 \
-            --report-every 1 --image-every 2 \
+            --generations 10 --parents 8 --offspring-per-parent 1 \
+            --report-every 5 --image-every 10 \
             --out-root results/symmetry-smoke
       - name: Check independently validated best results
         run: |
-          python -c "import json,pathlib; p=pathlib.Path('results/symmetry-smoke'); d=json.loads((p/'sequential_summary.json').read_text()); assert d['status']=='completed' and [x['n'] for x in d['completed']]==[17,18,19]; assert all(x['independent_validation'] in ('certified interval SAT','certified exact grid') for x in d['completed']); assert d['completed'][0]['best_L']<5.0; print('PASS', [(x['n'],x['best_L']) for x in d['completed']])"
+          python -c "import json,pathlib; p=pathlib.Path('results/symmetry-smoke'); d=json.loads((p/'sequential_summary.json').read_text()); assert d['status']=='completed' and [x['n'] for x in d['completed']]==[17,18,19]; assert all(x['independent_validation'] in ('certified interval SAT','certified exact grid') for x in d['completed']); assert d['completed'][0]['best_L']<5.0 and all(x['generations']==10 for x in d['completed']); print('PASS', [(x['n'],x['best_L']) for x in d['completed']])"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
