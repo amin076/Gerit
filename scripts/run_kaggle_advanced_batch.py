@@ -131,7 +131,7 @@ def independent_founder(n, first, seed):
                              -packing.container_side, distance, name, packing))
     if not eligible:
         return None, None
-    *_, name, packing = max(eligible)
+    *_, name, packing = max(eligible, key=lambda option: option[:4])
     return name, packing
 
 
