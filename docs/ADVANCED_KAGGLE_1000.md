@@ -67,7 +67,8 @@ py -3 scripts/run_kaggle_advanced_batch.py --counts 5 --generations 50 --parents
 
 Each N writes a separate run directory and independent validation report.
 A strictly better and independently interval-validated result updates the
-registry immediately. A worse valid result remains as an experiment record,
+registry immediately through the engine's optional best-packing callback,
+including intermediate generations (not only the end of the run). A worse valid result remains as an experiment record,
 not as a replacement. Interrupted batches preserve completed N entries and
 older bank solutions. If restarting, use only the remaining N with a fresh
 output identity or a different seed.
