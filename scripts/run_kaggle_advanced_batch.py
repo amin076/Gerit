@@ -151,9 +151,9 @@ def structural_move(parent, rng, cap):
 def run_one(n, args, bank):
     old = bank["problems"][str(n)]
     rng = random.Random(args.seed + n)
-    fresh = fresh_founder(n, args.founder, rng)
-    if args.start == "fresh" and args.initial_release > 0:
-        fresh = expanded_founder(fresh, args.initial_release)
+    raw_fresh = fresh_founder(n, args.founder, rng)
+    fresh = (expanded_founder(raw_fresh, args.initial_release)
+             if args.start == "fresh" else raw_fresh)
     archive = from_registry(old) if args.start in ("stored", "mixed") else None
     secondary_founder = None
     if args.start == "stored":
@@ -163,9 +163,9 @@ def run_one(n, args, bank):
     else:
         initial, other = fresh, ()
     if args.start == "fresh" and args.parents >= 2 and args.diverse_founders:
-        secondary_founder, second = independent_founder(n, fresh, args.seed + n + 100000)
+        secondary_founder, second = independent_founder(n, raw_fresh, args.seed + n + 100000)
         if second is not None:
-            other = (second,)
+            other = (expanded_founder(second, args.initial_release),)
     # Any initial stored champion is optional; no side-length hard cap equals the
     # champion. All valid offspring may explore a larger container.
     side_cap = max(float(grid_baseline(n).container_side),
