@@ -12,7 +12,7 @@ from gerit.config import RunConfig
 from gerit.evolution import evolve
 from scripts.build_kaggle_grid_bank import grid_solution
 from scripts.kaggle_best_registry import initialize_registry
-from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder, released_rotation_founder
+from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder, released_rotation_founder, expanded_founder
 from gerit.evolution import packing_distance
 
 
@@ -23,6 +23,21 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
         self.assertTrue(validate_packing(p, tolerance=0.0).valid)
         self.assertAlmostEqual(abs(p.squares[4].angle), math.pi / 4, places=10)
         self.assertLess(p.container_side, 3.0)
+
+    def test_expanded_start_changes_geometry_not_square_size(self):
+        for n in (6, 8, 12, 14):
+            original = grid_baseline(n)
+            raised = expanded_founder(original, 0.8)
+            self.assertEqual(len(raised.squares), n)
+            self.assertTrue(validate_packing(raised, tolerance=0.0).valid)
+            self.assertGreater(raised.container_side, original.container_side + 0.5)
+            self.assertEqual([s.angle for s in raised.squares],
+                             [s.angle for s in original.squares])
+            self.assertEqual(expanded_founder(original, 0), original)
+
+    def test_expanded_start_rejects_bad_parameter(self):
+        with self.assertRaises(ValueError):
+            expanded_founder(grid_baseline(8), -0.1)
 
     def test_released_rotations_are_valid_and_not_frozen(self):
         for n in (6, 7, 8, 10):
