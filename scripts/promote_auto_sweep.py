@@ -75,6 +75,9 @@ def audit(*,registry,sweep_dir,apply=False,report=None):
         side=float(bank["problems"][str(n)]["side"])
         path=row.get("best_file")
         if not path:
+            if float(row["best_side"])<side-1e-10:
+                raise ValueError(
+                    f"Missing certified candidate file for improved N={n}")
             continue
         try:
             candidate=load_packing_json(_locate(path,root))
