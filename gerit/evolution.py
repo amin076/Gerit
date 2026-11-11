@@ -127,7 +127,7 @@ def mutate(parent: Packing,rng: random.Random,side_cap: float) -> Packing | None
         return None
     return child
 
-def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, initial_seeds: tuple[Packing, ...] = (), multi_parent_mutator: Callable[[Packing, Packing, random.Random], Packing | None] | None = None, multi_parent_probability: float = 0.0, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None, exploration_side_cap: float | None = None, historical_jump_every: int = 0, historical_stagnation_after: int = 30, historical_archive_limit: int = 150) -> Result:
+def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int = 5, adaptive: bool = False, coordinated: bool = False, compression: bool = False, learning: bool = False, initial_seed: Packing | None = None, initial_seeds: tuple[Packing, ...] = (), multi_parent_mutator: Callable[[Packing, Packing, random.Random], Packing | None] | None = None, multi_parent_probability: float = 0.0, structural_mutator: Callable[[Packing, random.Random], Packing | None] | None = None, structural_probability: float = 0.35, image_every: int = 1, progress_callback: Callable[[Generation], None] | None = None, exploration_side_cap: float | None = None, historical_jump_every: int = 0, historical_stagnation_after: int = 30, historical_archive_limit: int = 150, best_callback: Callable[[Packing, int], None] | None = None) -> Result:
     """Run a fully audited seeded experiment, retaining every proposal and selection.
 
     When output_dir is given, emits persistent logs and one population PNG per
@@ -345,6 +345,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         historical_founders=tuple((uid,p,0) for uid,p in parents)
         historical_archive.extend(historical_founders)
     history=[snapshot(0,0)]
+    if best_callback is not None:
+        best_callback(best, 0)
     stop_reason="max_generations"
     for gen in range(1,cfg.max_generations+1):
         current_generation=gen
@@ -374,6 +376,8 @@ def evolve(cfg: RunConfig, *, output_dir: str | None = None, image_columns: int 
         if current.container_side<best.container_side:
             best,best_id=current,current_id
             last_improvement_generation=gen
+            if best_callback is not None:
+                best_callback(best, gen)
         if historical_jump_every and gen % historical_jump_every == 0:
             idle=gen-last_improvement_generation
             if idle >= historical_stagnation_after and historical_archive:
