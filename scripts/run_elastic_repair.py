@@ -99,7 +99,7 @@ def run(registry,*,n=228,attempts=24,iterations=500,seed=102,
         output.parent.mkdir(parents=True,exist_ok=True)
         output.write_text(json.dumps({"n":n,"side":best.container_side,
                                      "squares":[asdict(s) for s in best.squares]},
-                                     indent=2)+"\\n",encoding="utf-8")
+                                     indent=2)+"\n",encoding="utf-8")
     result={"n":n,"source_n":n-1,"source_side":source.container_side,
             "source_file":str(source_file) if source_file else None,
             "best_file":str(best_file) if best_file and best else None,
