@@ -33,7 +33,7 @@ class LFrameTests(unittest.TestCase):
                 c=Candidate(n,tuple((repr(s.x),repr(s.y),repr(s.angle))
                                     for s in packing.squares),
                             "unit-test",packing.container_side)
-                self.assertTrue(interval_validate(c).valid)
+                self.assertTrue(interval_validate(c).valid, interval_validate(c).reason)
                 self.assertLess(packing.container_side,grid_baseline(n).container_side)
 
     def test_dry_run_keeps_bank_and_cascades(self):
