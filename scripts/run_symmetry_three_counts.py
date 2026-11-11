@@ -42,7 +42,7 @@ def prepare_founders(n, seed, parents, cap, *, insertion_attempts=75):
             bank.append(("incremental_insertion",inserted))
     # Reserve distinct structural families before sampling extra candidates.
     rank={name:i for i,name in enumerate(("four_corner_clusters",
-        "incremental_insertion",
+        "x_core_fourfold","incremental_insertion",
         "fourfold","diagonal_pairs","horizontal","vertical",
         "corner_first","random_sparse","grid"))}
     bank.sort(key=lambda row:(rank.get(row[0],99), row[1].container_side))
