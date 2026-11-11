@@ -134,6 +134,51 @@ def independent_founder(n, first, seed):
     *_, name, packing = max(eligible)
     return name, packing
 
+
+def independent_founders(n, primary, seed, max_additional):
+    """Choose diverse validated founder geometries using existing Gerit operators.
+
+    Unlike adding more survivor slots to only two geometries, each chosen seed
+    is a genuine founder with independent provenance. No archive champion is
+    injected unless the caller explicitly requests mixed/stored start.
+    """
+    if max_additional <= 0:
+        return []
+    rng = random.Random(seed)
+    bank = geometry_seed_bank(n, seed, copies=2)
+    # Create rotated, gently released variants from several EXISTING geometric
+    # founders. These are independent geometry transformations, not fixed-N
+    # precomputed answers.
+    for i, (name, candidate) in enumerate(tuple(bank)):
+        if candidate is None or i >= 14:
+            continue
+        rotated = released_rotation_founder(candidate, seed + 17011 + i)
+        if rotated is not None:
+            bank.append((name + "_rotated", rotated))
+    selected = [("primary", primary)]
+    available = []
+    for name, p in bank:
+        if (p is None or len(p.squares) != n
+                or not validate_packing(p, tolerance=0.0).valid):
+            continue
+        if any(packing_distance(p, chosen) <= 1e-7 for _, chosen in selected):
+            continue
+        available.append((name, p))
+    while len(selected) - 1 < max_additional and available:
+        # Farthest-first: explicitly choose geometrically different founders.
+        rank = lambda entry: (
+            min(packing_distance(entry[1], chosen) for _, chosen in selected),
+            sum(abs(math.sin(2 * square.angle)) > 1e-6
+                for square in entry[1].squares),
+            rng.random(),
+        )
+        best = max(available, key=rank)
+        selected.append(best)
+        available = [(name, p) for name, p in available
+                     if packing_distance(p, best[1]) > 1e-7]
+    return selected[1:]
+
+
 def structural_move(parent, rng, cap):
     """Existing generic free-rotation, compaction and relocation operators."""
     roll = rng.random()
@@ -162,10 +207,15 @@ def run_one(n, args, bank):
         initial, other = fresh, (archive,)
     else:
         initial, other = fresh, ()
+    founder_names = []
     if args.start == "fresh" and args.parents >= 2 and args.diverse_founders:
-        secondary_founder, second = independent_founder(n, raw_fresh, args.seed + n + 100000)
-        if second is not None:
-            other = (expanded_founder(second, args.initial_release),)
+        extras = independent_founders(
+            n, raw_fresh, args.seed + n + 100000,
+            min(args.founder_count - 1, args.parents - 1))
+        founder_names = [name for name, _ in extras]
+        other = tuple(expanded_founder(p, args.initial_release)
+                      for _, p in extras)
+        secondary_founder = founder_names[0] if founder_names else None
     # Any initial stored champion is optional; no side-length hard cap equals the
     # champion. All valid offspring may explore a larger container.
     side_cap = max(float(grid_baseline(n).container_side),
@@ -181,7 +231,8 @@ def run_one(n, args, bank):
         max_evaluations=args.generations * args.parents * args.offspring + 10000,
         seed=args.seed + n,
     )
-    run_id = f"n{n}-g{args.generations}-p{args.parents}-s{args.seed+n}-{args.start}-{args.founder}"
+    run_id = (f"n{n}-g{args.generations}-p{args.parents}-o{args.offspring}"
+              f"-f{args.founder_count}-s{args.seed+n}-{args.start}-{args.founder}")
     if args.initial_release:
         run_id += f"-release{args.initial_release:g}"
     run_dir = Path(args.output_root) / run_id
@@ -215,7 +266,8 @@ def run_one(n, args, bank):
 
     print(f"START N={n} initial={initial.container_side:.12f} "
           f"stored={old['side']:.12f} mode={args.start} founder={args.founder} "
-          f"secondary_founder={secondary_founder} initial_release={args.initial_release:g}", flush=True)
+          f"founders={1+len(founder_names)} {founder_names} "
+          f"initial_release={args.initial_release:g}", flush=True)
     result = evolve(
         cfg, output_dir=str(run_dir), image_every=args.image_every,
         coordinated=True, initial_seed=initial, initial_seeds=other,
@@ -241,6 +293,8 @@ def run_one(n, args, bank):
     summary = {
         "n": n, "run_id": run_id, "start_mode": args.start,
         "founder": args.founder, "secondary_founder": secondary_founder,
+        "founder_names": founder_names,
+        "founder_count": 1 + len(founder_names),
         "initial_release": args.initial_release,
         "started_from_registry": args.start != "fresh",
         "old_registry_side": old["side"], "best_side": result.best.container_side,
@@ -264,9 +318,11 @@ def main():
                    help="Registry is archival by default and NOT a mandatory founder")
     p.add_argument("--founder", choices=("auto", "corner-center", "symmetry"),
                    default="auto")
-    p.add_argument("--generations", type=int, default=50)
-    p.add_argument("--parents", type=int, default=2)
+    p.add_argument("--generations", type=int, default=300)
+    p.add_argument("--parents", type=int, default=12)
     p.add_argument("--offspring", type=int, default=5)
+    p.add_argument("--founder-count", type=int, default=6,
+                   help="Distinct independently constructed initial founders; remainder are engine-generated")
     p.add_argument("--diverse-founders", action=argparse.BooleanOptionalAction,
                    default=True, help="Seed a second independent geometry when starting fresh")
     p.add_argument("--seed", type=int, default=20261111)
@@ -284,6 +340,7 @@ def main():
     if (not a.counts or len(set(a.counts)) != len(a.counts)
             or any(not 1 <= n <= 1000 for n in a.counts)
             or a.parents < 2 or a.generations < 1 or a.offspring < 1
+            or not 1 <= a.founder_count <= a.parents
             or a.report_every < 1 or a.image_every < 1
             or not math.isfinite(a.exploration_extra) or a.exploration_extra < 0
             or not math.isfinite(a.initial_release) or a.initial_release < 0
