@@ -149,6 +149,17 @@ def run(*,registry,output_dir,first=231,max_n=1000,
         growth_near=work/"near.npz"
         growth_best=work/"growth_best.json"
         if not growth_report.exists():
+            # If interrupted after a partial write, start a fresh
+            # numbered attempt instead of overwriting the evidence.
+            if growth_near.exists() or growth_best.exists():
+                count=1
+                while (work/f"growth_retry_{count}.json").exists() or (
+                       work/f"near_retry_{count}.npz").exists() or (
+                       work/f"growth_best_retry_{count}.json").exists():
+                    count+=1
+                growth_report=work/f"growth_retry_{count}.json"
+                growth_near=work/f"near_retry_{count}.npz"
+                growth_best=work/f"growth_best_retry_{count}.json"
             grow(registry,n=n,attempts=attempts,iterations=iterations,
                  seed=seed+n,report=growth_report,checkpoint=growth_near,
                  best_file=growth_best,source_file=source_file,apply=False,
@@ -160,11 +171,27 @@ def run(*,registry,output_dir,first=231,max_n=1000,
         # available to the independent deep stage, so the next N runs.
         if deep_generations:
             deep_folder=work/"deep"
+            previous_deep=None
+            if deep_folder.exists():
+                progress=deep_folder/"progress.json"
+                completed=(json.loads(progress.read_text(encoding="utf-8"))
+                           if progress.exists() else {})
+                if completed.get("finished_generation",0)<deep_generations:
+                    previous_deep=deep_folder
+                    count=1
+                    while (work/f"deep_retry_{count}").exists():
+                        count+=1
+                    deep_folder=work/f"deep_retry_{count}"
             if not deep_folder.exists():
+                prior_valid=(previous_deep/"best_valid.json"
+                             if previous_deep else None)
+                starter=(prior_valid if prior_valid and
+                         _certified_file_or_none(prior_valid,n) else
+                         growth_best if growth_p else None)
                 optimize(registry=registry,n=n,
                          generations=deep_generations,iterations=deep_iterations,
                          seed=seed+100000+n,log_every=max(1,min(10,deep_generations)),
-                         output_dir=deep_folder,candidate_file=growth_best if growth_p else None,
+                         output_dir=deep_folder,candidate_file=starter,
                          shrink_max=.035,apply=False)
             deep_file=deep_folder/"best_valid.json"
             deep_p=_certified_file_or_none(deep_file,n)
