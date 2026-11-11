@@ -56,6 +56,23 @@ near-feasible** snapshots with a fresh budget and seed:
 py -3 scripts/run_deep_elastic.py --n 230 --generations 900 --iterations 180 --seed 2301 --resume-dir results/kaggle_deep/n230_g900_s2300 --output-dir results/kaggle_deep/n230_g900_s2301
 ```
 
+
+### Register a winning dry-run immediately (without repeating 900 generations)
+
+If `best_valid.json` from the first dry-run has a smaller certified
+side, this one-generation command registers that exact verified
+checkpoint at startup, then performs just one additional search
+generation:
+
+```cmd
+py -3 scripts/run_deep_elastic.py --n 230 --generations 1 --iterations 80 --seed 2303 --resume-dir results/kaggle_deep/n230_g900_s2300 --output-dir results/kaggle_deep/n230_register_s2303 --apply
+py -3 scripts/kaggle_best_registry.py status
+```
+
+Use the most recent dry-run experiment as `--resume-dir` if you have
+continued it across multiple budgets. Never overwrite experiment
+directories; they are the durable audit trail.
+
 After checking the improvement, a new **--apply** run may register
 certified improvements as it goes. For safety, do not run any other
 registry writer at the same time:
