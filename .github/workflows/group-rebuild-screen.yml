@@ -1,0 +1,44 @@
+name: Gerit group rebuild screening
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "gerit/group_rebuild_geometry.py"
+      - "scripts/run_group_rebuild_screen.py"
+      - "tests/test_group_rebuild_screen.py"
+      - ".github/workflows/group-rebuild-screen.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Test safe group-rebuild operator
+        run: python -m unittest tests.test_group_rebuild_screen -v
+      - name: Prepare disposable 30-improvement registry
+        run: |
+          python scripts/kaggle_best_registry.py --registry results/ci_group_rebuild_bank.json init
+          python scripts/run_center45_family.py --registry results/ci_group_rebuild_bank.json --report results/ci_group_rebuild_center45.json --apply
+          python scripts/run_l_frame_propagation.py --registry results/ci_group_rebuild_bank.json --report results/ci_group_rebuild_l.json --apply --ledger results/ci_group_rebuild_prior_ledger.jsonl --summary results/ci_group_rebuild_prior_summary.csv
+      - name: Group rebuild N plus 1 dry run up to 120
+        run: |
+          python scripts/run_group_rebuild_screen.py --registry results/ci_group_rebuild_bank.json --max-n 120 --attempts 60 --probes 50 --group-size 3 --report results/ci_group_rebuild_dryrun.json --ledger results/ci_group_rebuild_ledger.jsonl --summary results/ci_group_rebuild_summary.csv
+      - name: Save report and method metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-group-rebuild-screen
+          path: |
+            results/ci_group_rebuild_dryrun.json
+            results/ci_group_rebuild_summary.csv
+            results/ci_group_rebuild_ledger.jsonl
+          if-no-files-found: warn
