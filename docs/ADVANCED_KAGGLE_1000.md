@@ -150,3 +150,42 @@ If rotated children are created but rotated parents disappear, examine
 survivor selection/fitness-diversity tradeoffs before adding more
 mutation operators. If both counts stay zero, investigate geometry
 proposal acceptance rates. Do not repeat identical experiments.
+
+## Controlled larger-than-grid starting geometry (2026-11-11)
+
+User screening over N=6,8,11,12,13,14 found **many valid rotated
+children** but no shorter final container. For N=8,11,12 rotated
+parents often survived; for N=6,13,14 they were often eliminated.
+Hence the remaining problem is not a blanket rotation ban: producing
+a valid rotation does not necessarily contract the entire layout.
+
+The `--initial-release` parameter permits a controlled, *fresh-only*
+A/B experiment: translate all centers away from the centroid so the
+initial square container grows by roughly the selected amount.
+Square dimensions and angles are unchanged during center expansion.
+Both independently chosen starting founders are expanded separately.
+This changes only the initialization; no existing operator, historical
+jump, crossover or selection routine is replaced.
+
+**This is a diagnostic, not a recommended default**; a larger start may
+produce *worse* results and requires enough subsequent valid compaction
+moves. Default release remains 0 and retains old runs exactly.
+
+Compare with prior `--seed 20261114` compact-start runs, using
+identical counts/generation budget and a unique release suffix in
+output folder names:
+
+```cmd
+py -3 -m unittest tests.test_kaggle_advanced_bank -v
+py -3 scripts/run_kaggle_advanced_batch.py --counts 8 12 14 --generations 50 --parents 2 --offspring 5 --seed 20261114 --start fresh --founder auto --initial-release 0.8 --report-every 10
+py -3 scripts/kaggle_best_registry.py status
+```
+
+For a new N, e.g. 18, use `--counts 18` instead of rerunning the
+same completed dataset. A longer experiment should follow only if the
+short diagnostic shows meaningful movement, otherwise investigate
+structural compaction, candidate acceptance and parent diversity.
+
+Do not increase the baseline archive to the larger initial sides.
+The archive stays at its previous lower values until a genuinely
+better fully validated arrangement is found.
