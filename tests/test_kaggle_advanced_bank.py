@@ -12,7 +12,8 @@ from gerit.config import RunConfig
 from gerit.evolution import evolve
 from scripts.build_kaggle_grid_bank import grid_solution
 from scripts.kaggle_best_registry import initialize_registry
-from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one
+from scripts.run_kaggle_advanced_batch import fresh_founder, from_registry, run_one, independent_founder
+from gerit.evolution import packing_distance
 
 
 class AdvancedBankIntegrationTests(unittest.TestCase):
@@ -22,6 +23,14 @@ class AdvancedBankIntegrationTests(unittest.TestCase):
         self.assertTrue(validate_packing(p, tolerance=0.0).valid)
         self.assertAlmostEqual(abs(p.squares[4].angle), math.pi / 4, places=10)
         self.assertLess(p.container_side, 3.0)
+
+    def test_second_founder_is_not_a_copy(self):
+        first = fresh_founder(5, "auto", random.Random(9))
+        name, second = independent_founder(5, first, 10205)
+        self.assertIsNotNone(name)
+        self.assertIsNotNone(second)
+        self.assertGreater(packing_distance(first, second), 1e-7)
+        self.assertTrue(validate_packing(second, tolerance=0.0).valid)
 
     def test_existing_geometric_founders_multiple_counts(self):
         for n in (6, 7, 8, 10):
