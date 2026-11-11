@@ -19,6 +19,7 @@ from gerit.config import load_config
 from gerit.evolution import evolve, packing_distance
 from gerit.geometry import grid_baseline, validate_packing
 from gerit.kaggle import Candidate, puzzle_score, validate
+from gerit.t_core_geometry import t_core_three_arm_seed
 from gerit.symmetry_operators import (geometry_seed_bank,
     four_corner_cluster_seed, multi_parent_quadrant_crossover,
     propose_symmetry_group_move, OPERATORS)
@@ -62,8 +63,16 @@ def run_one(n,a,root):
     baseline=grid_baseline(n)
     cap=baseline.container_side+a.exploration_extra_side
     seed=a.seed+n
-    founders=prepare_founders(n, seed, a.parents, cap,
-                              insertion_attempts=a.insertion_attempts)
+    if a.founder_mode=="t-only":
+        if n!=17:
+            raise ValueError("t-only mode requires --counts 17")
+        core=t_core_three_arm_seed(n,random.Random(seed))
+        if core is None or not validate_packing(core,tolerance=0.).valid:
+            raise ValueError("Invalid T-core founder")
+        founders=[("t_core_three_arm",core)]
+    else:
+        founders=prepare_founders(n, seed, a.parents, cap,
+                                  insertion_attempts=a.insertion_attempts)
     print(f"\n{'='*64}\nSTART N={n} | founder_count={len(founders)} | "
           f"families={[name for name,_ in founders]} | cap={cap:.3f}",flush=True)
     for name,p in founders:
@@ -133,6 +142,7 @@ def run_one(n,a,root):
         raise RuntimeError(f"N={n} failed independent interval SAT: {check.reason}")
     summary={
         "n":n,"seed":seed,"generations":len(result.history)-1,
+        "founder_mode":a.founder_mode,
         "initial_grid_L":baseline.container_side,
         "best_founder_L":min(p.container_side for _,p in founders),
         "founder_names":[name for name,_ in founders],
@@ -167,6 +177,8 @@ def run_one(n,a,root):
 def main(argv=None):
     p=argparse.ArgumentParser(description="Sequential N17/N18/N19 multi-founder geometry experiments")
     p.add_argument("--counts",nargs="+",type=int,choices=(17,18,19),default=[17,18,19])
+    p.add_argument("--founder-mode",choices=("all","t-only"),default="all",
+                   help="t-only isolates the new 17-square three-arm T seed")
     p.add_argument("--generations",type=int,default=50)
     p.add_argument("--parents",type=int,default=20)
     p.add_argument("--offspring-per-parent",type=int,default=5)
@@ -186,6 +198,8 @@ def main(argv=None):
     p.add_argument("--out-root",type=Path,default=Path("results/n17-n18-n19-symmetry"))
     a=p.parse_args(argv)
     if len(set(a.counts))!=len(a.counts):p.error("Repeated N")
+    if a.founder_mode=="t-only" and a.counts!=[17]:
+        p.error("--founder-mode t-only requires --counts 17")
     if a.generations<1 or a.parents<2 or a.offspring_per_parent<1:p.error("invalid population/generations")
     if a.report_every<1 or a.image_every<1:p.error("invalid interval")
     if a.exploration_extra_side<0 or not math.isfinite(a.exploration_extra_side):p.error("invalid extra side")
