@@ -59,6 +59,33 @@ def fresh_founder(n, kind, rng):
 
 
 
+def expanded_founder(packing, extra_side):
+    """Expand centers while retaining every orientation and original structure.
+
+    A controlled exploratory release: original unit-square sizes do not change.
+    It is deliberately not a claim that this makes a better packing.
+    """
+    if not math.isfinite(extra_side) or extra_side < 0:
+        raise ValueError("extra_side must be finite and nonnegative")
+    if extra_side == 0:
+        return packing
+    if not validate_packing(packing, tolerance=0.0).valid:
+        raise ValueError("Cannot expand invalid geometry")
+    n = len(packing.squares)
+    cx = sum(sq.x for sq in packing.squares) / n
+    cy = sum(sq.y for sq in packing.squares) / n
+    factor = 1.0 + extra_side / max(1.0, packing.container_side - 1.0)
+    expanded = minimum_bounding_square(tuple(
+        Square(cx + (sq.x - cx) * factor,
+               cy + (sq.y - cy) * factor, sq.angle)
+        for sq in packing.squares))
+    if not validate_packing(expanded, tolerance=0.0).valid:
+        raise ValueError("Unexpected invalid released founder")
+    if expanded.container_side <= packing.container_side:
+        raise ValueError("Released founder failed to expand")
+    return expanded
+
+
 def released_rotation_founder(first, seed):
     """Make a valid rotated exploratory parent by releasing an existing layout."""
     rng = random.Random(seed)
@@ -125,6 +152,8 @@ def run_one(n, args, bank):
     old = bank["problems"][str(n)]
     rng = random.Random(args.seed + n)
     fresh = fresh_founder(n, args.founder, rng)
+    if args.start == "fresh" and args.initial_release > 0:
+        fresh = expanded_founder(fresh, args.initial_release)
     archive = from_registry(old) if args.start in ("stored", "mixed") else None
     secondary_founder = None
     if args.start == "stored":
@@ -153,6 +182,8 @@ def run_one(n, args, bank):
         seed=args.seed + n,
     )
     run_id = f"n{n}-g{args.generations}-p{args.parents}-s{args.seed+n}-{args.start}-{args.founder}"
+    if args.initial_release:
+        run_id += f"-release{args.initial_release:g}"
     run_dir = Path(args.output_root) / run_id
     if run_dir.exists():
         raise FileExistsError(f"Refusing to overwrite history: {run_dir}")
@@ -184,7 +215,7 @@ def run_one(n, args, bank):
 
     print(f"START N={n} initial={initial.container_side:.12f} "
           f"stored={old['side']:.12f} mode={args.start} founder={args.founder} "
-          f"secondary_founder={secondary_founder}", flush=True)
+          f"secondary_founder={secondary_founder} initial_release={args.initial_release:g}", flush=True)
     result = evolve(
         cfg, output_dir=str(run_dir), image_every=args.image_every,
         coordinated=True, initial_seed=initial, initial_seeds=other,
@@ -210,6 +241,7 @@ def run_one(n, args, bank):
     summary = {
         "n": n, "run_id": run_id, "start_mode": args.start,
         "founder": args.founder, "secondary_founder": secondary_founder,
+        "initial_release": args.initial_release,
         "started_from_registry": args.start != "fresh",
         "old_registry_side": old["side"], "best_side": result.best.container_side,
         "interval_validation": check.reason,
@@ -241,6 +273,8 @@ def main():
     p.add_argument("--report-every", type=int, default=10)
     p.add_argument("--image-every", type=int, default=50)
     p.add_argument("--exploration-extra", type=float, default=0.8)
+    p.add_argument("--initial-release", type=float, default=0.0,
+                   help="Additional starting-side space for fresh founders; 0 preserves existing behavior")
     p.add_argument("--structural-probability", type=float, default=0.35)
     p.add_argument("--crossover-probability", type=float, default=0.20)
     p.add_argument("--historical-jump-every", type=int, default=20)
@@ -252,6 +286,8 @@ def main():
             or a.parents < 2 or a.generations < 1 or a.offspring < 1
             or a.report_every < 1 or a.image_every < 1
             or not math.isfinite(a.exploration_extra) or a.exploration_extra < 0
+            or not math.isfinite(a.initial_release) or a.initial_release < 0
+            or (a.initial_release > 0 and a.start != "fresh")
             or not 0 <= a.structural_probability <= 1
             or not 0 <= a.crossover_probability <= 1
             or a.structural_probability + a.crossover_probability > 1
