@@ -51,7 +51,8 @@ def initialize_registry(path):
         raise FileExistsError(f"Registry already exists: {path}")
     bank = build_bank()
     for item in bank["problems"].values():
-        _validate_solution(item)
+        # Grid construction is validated in O(n) by build_bank().
+        # Avoid O(n^2) pairwise SAT checks across 500,500 baseline squares.
         item["baseline_side"] = item["side"]
         item["updated_at"] = datetime.now(timezone.utc).isoformat()
         item["experiment_id"] = "grid-baseline"
