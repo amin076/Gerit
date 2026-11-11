@@ -135,7 +135,7 @@ def independent_founder(n, first, seed):
     return name, packing
 
 
-def independent_founders(n, primary, seed, max_additional):
+def independent_founders(n, primary, seed, max_additional, initial_release=0.0):
     """Choose diverse validated founder geometries using existing Gerit operators.
 
     Unlike adding more survivor slots to only two geometries, each chosen seed
@@ -166,6 +166,15 @@ def independent_founders(n, primary, seed, max_additional):
             continue
         if any(packing_distance(p, chosen) <= 1e-7 for _, chosen in selected):
             continue
+        # A valid packing can become invalid when center distances are
+        # uniformly expanded: rotations can change pairwise SAT projections.
+        # Filter unsuitable released layouts BEFORE founder selection, so
+        # a different independent geometry can be chosen in its place.
+        if initial_release:
+            try:
+                expanded_founder(p, initial_release)
+            except ValueError:
+                continue
         available.append((name, p))
     while len(selected) - 1 < max_additional and available:
         # Farthest-first: explicitly choose geometrically different founders.
@@ -214,7 +223,8 @@ def run_one(n, args, bank):
     if args.start == "fresh" and args.parents >= 2 and args.diverse_founders:
         extras = independent_founders(
             n, raw_fresh, args.seed + n + 100000,
-            min(args.founder_count - 1, args.parents - 1))
+            min(args.founder_count - 1, args.parents - 1),
+            initial_release=args.initial_release)
         founder_names = [name for name, _ in extras]
         other = tuple(expanded_founder(p, args.initial_release)
                       for _, p in extras)
