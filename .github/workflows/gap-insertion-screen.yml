@@ -1,0 +1,49 @@
+name: Gerit gap insertion geometric screen
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "gerit/gap_insert_geometry.py"
+      - "scripts/run_gap_insertion_screen.py"
+      - "tests/test_gap_insertion_screen.py"
+      - ".github/workflows/gap-insertion-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gap-screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Regression tests
+        run: python -m unittest tests.test_gap_insertion_screen -v
+      - name: Create isolated bank
+        run: python scripts/kaggle_best_registry.py --registry results/ci_gap_bank.json init
+      - name: Rebuild the previous 30 improved solutions
+        run: |
+          python scripts/run_center45_family.py --registry results/ci_gap_bank.json --report results/ci_gap_center45.json --apply
+          python scripts/run_l_frame_propagation.py --registry results/ci_gap_bank.json --report results/ci_gap_l_frame.json --apply --ledger results/ci_gap_prior_ledger.jsonl --summary results/ci_gap_prior_summary.csv
+      - name: Screen N-to-N+1 pocket insertions for the full bank
+        run: |
+          python scripts/run_gap_insertion_screen.py --registry results/ci_gap_bank.json --max-n 1000 --samples 300 --report results/ci_gap_screen.json --ledger results/ci_gap_method_ledger.jsonl --summary results/ci_gap_method_summary.csv --apply
+          python scripts/kaggle_best_registry.py --registry results/ci_gap_bank.json status
+      - name: Archive audit, updated registry and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-gap-insertion-scan
+          path: |
+            results/ci_gap_*.json
+            results/ci_gap_*.csv
+            results/ci_gap_*.jsonl
+          if-no-files-found: warn
+          retention-days: 21
