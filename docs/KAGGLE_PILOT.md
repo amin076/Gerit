@@ -43,6 +43,4 @@ No Kaggle submission is performed here.
 validation and population distance calculations. Start with small N. Avoid
 running this configuration across all 1,000 sizes until scalability is measured.
 
-Every run starts from the regular grid: the registry's previous champion is
-compared against the outcome but is NOT YET injected as an initial parent.
-This is deliberately not presented as a fully resume-capable optimization loop.
+Every run now starts from the **validated stored champion** as its initial parent. The evolving population and its learned policies are not yet resumed from a previous run; this is not a full evolutionary checkpoint/resume mechanism.
