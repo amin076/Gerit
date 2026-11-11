@@ -231,3 +231,61 @@ per N**, versus 3,000 previously. It does not perform full state resume
 from earlier experiments and uses unique output folders. The integrated
 best-answer registry stores improvements as they occur, but no worse
 candidate replaces a current winner.
+
+## Symmetry audit BEFORE evolution: 5, 17, 18, 19, 20
+
+Existing Gerit `symmetry_operators.py` already defined:
+- `four_corner_clusters`: 4 m-by-m blocks + center square at pi/4
+  for N = 4*m*m + 1, including 17 and 37.
+- `fourfold`: 90-degree quarter-turn symmetry.
+- `diagonal_pairs`: twofold / 180-degree rotational symmetry.
+- `horizontal` and `vertical`: top/bottom and left/right reflections.
+- `corner_first`, `random_sparse`, and the existing X/T motif seeds.
+
+The five-square specialist `best_inward_for_angle(pi/4)` is also
+evaluated, not silently excluded merely because the generic corner-cluster
+generator starts at N=17.
+
+**Previous gap:** the batch picked only a small subset as starting parents;
+a better existing geometric candidate could therefore be excluded before
+its archive score was even checked. This is now corrected.
+
+`scripts/audit_kaggle_symmetry.py` independently evaluates every existing
+family for a chosen N, emits per-family best-side and counts, and on
+`--apply` offers only strictly better candidates to the durable registry
+using the independent high-precision interval validator. The score is
+never worsened. It does not mutate or force the evolutionary population.
+
+The advanced batch now runs the symmetry audit automatically before each
+non-perfect-square N; disable with `--no-symmetry-audit` only for ablation.
+When `--start fresh --founder auto`, it also allows the **best geometric
+family** (not necessarily the stored champion) as an independent start,
+with optional exploratory release. All original rotations, selection,
+crossover and historical revival remain unrestricted.
+
+### First isolate the four requested N values without 18,000 offspring each
+
+```cmd
+git pull --ff-only
+py -3 -m unittest tests.test_kaggle_symmetry_preflight -v
+py -3 scripts/audit_kaggle_symmetry.py --counts 17 18 19 20 --seed 2715 --copies 3 --apply
+py -3 scripts/kaggle_best_registry.py status
+```
+
+The `--apply` command writes to the user's existing local registry;
+the GitHub Actions workflow runs the same audit on a separate disposable
+CI registry and publishes its JSON artifact. The GitHub runner's registry
+does NOT alter the local PC or repository data.
+
+Then optionally run the full evolutionary batch over just those counts,
+**after checking audit results**:
+
+```cmd
+py -3 scripts/run_kaggle_advanced_batch.py --counts 17 18 19 20 --generations 300 --parents 12 --founder-count 6 --offspring 5 --start fresh --founder auto --initial-release 0.3 --report-every 10 --seed 20261120
+```
+
+Do not confuse these two tests: symmetry audit itself requires **zero
+generations**; evolutionary optimization subsequently requires additional
+generations. Both preserve historical solutions. The list of families
+contains geometries and partial symmetries; not every count admits a
+complete fourfold symmetry with the selected template.
