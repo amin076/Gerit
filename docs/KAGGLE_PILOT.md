@@ -70,3 +70,37 @@ are intentionally not overwritten.
 ```cmd
 py -3 -m unittest tests.test_import_gerit_history tests.test_kaggle_screening -v
 ```
+
+## Critical branch compatibility finding (2026-11-11)
+
+**Do not replace the specialized five-square evolution with the generic
+screening driver.** The original branch
+`feature/five-square-corner-center` has substantial later work not present
+in this pipeline branch, including:
+
+- `experiments/five_squares/optimizer.py` and its corner-center founder
+- `scripts/run_five_square_evolution.py` with genuine generations
+- `gerit/packing_geometry_moves.py` (freely rotating pivots)
+- `gerit/contact_compaction.py` (joint contact compaction)
+- historical-jump revival, broader exploratory side caps and progress metrics
+
+The founder is four corner squares plus the center square; the specialized
+rotation of the center must **not** restrict the corner squares in the
+evolutionary offspring. The old fixed-corner specialist is legacy-only.
+The feature branches have diverged, so a blind cherry-pick or overwrite of
+`gerit/evolution.py` would discard important evolution functionality.
+
+Local historical scan on 2026-11-11 found a validated five-square packing
+at L=2.707107181187 under
+`results/n5-evolution-500-seed2715/run-20261110T090446Z-b4e90aeb/best_result.json`.
+This observed record lives on the Windows machine, not in this repository.
+Import this full coordinate record into the registry before another five-square
+screening:
+
+```cmd
+py -3 scripts/import_gerit_history.py --root results --n 5 --apply
+py -3 scripts/kaggle_best_registry.py status
+```
+
+Next integration must port the registry **into the existing advanced engine**,
+not downgrade the advanced engine to this generic two-parent screening driver.
