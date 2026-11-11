@@ -1,5 +1,5 @@
 """Independent Gerit corner_cluster family experiment, with audited method ledger."""
-from scripts.run_symmetry_family import main_for_family
+from run_symmetry_family import main_for_family
 
 if __name__ == "__main__":
     main_for_family("corner_cluster")
