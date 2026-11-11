@@ -27,7 +27,7 @@ def l_frame_target(source_n: int, source_side: float, *, limit: int = 1000) -> i
     return target if target <= limit else None
 
 
-def l_frame_extend(source: Packing) -> Packing:
+def l_frame_extend(source: Packing, *, clearance: float = 1e-6) -> Packing:
     """Build one actual geometric candidate with two straight strips.
 
     Source is rebased to its tight axis-aligned bounding box; no known
@@ -35,6 +35,8 @@ def l_frame_extend(source: Packing) -> Packing:
     """
     if not source.squares:
         raise ValueError("An existing packing is required")
+    if not math.isfinite(clearance) or not 0 < clearance < 0.01:
+        raise ValueError("Clearance must be finite and in (0, 0.01)")
     base = minimum_bounding_square(source.squares)
     side = base.container_side
     k = math.floor(side)
@@ -43,9 +45,13 @@ def l_frame_extend(source: Packing) -> Packing:
     # The earlier squares occupy [0,L]x[0,L]. The new top strip lies
     # above y=L; the right strip lies beyond x=L. Their upper-right
     # corner occupies [L,L+1]x[L,L+1].
-    additional = [Square(i+0.5, side+0.5, 0.0) for i in range(k)]
-    additional += [Square(side+0.5, i+0.5, 0.0) for i in range(k)]
-    additional.append(Square(side+0.5, side+0.5, 0.0))
+    # Keep positive separation from the inherited outer boundary. Exact
+    # contacts after float serialization may be uncertifiable with interval
+    # SAT, even though the standard float SAT says the layout is valid.
+    new_edge = side + 0.5 + clearance
+    additional = [Square(i+0.5, new_edge, 0.0) for i in range(k)]
+    additional += [Square(new_edge, i+0.5, 0.0) for i in range(k)]
+    additional.append(Square(new_edge, new_edge, 0.0))
     return minimum_bounding_square((*base.squares, *additional))
 
 
