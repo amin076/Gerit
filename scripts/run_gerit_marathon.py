@@ -334,6 +334,8 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
                   deep_iterations=deep_iterations, seed=seed,
                   apply=apply, registry=str(bank_file),
                   adaptive=adaptive, history_state=str(Path(history_state).resolve()) if history_state else None)
+    if adaptive and not history_state:
+        raise ValueError("Adaptive mode requires --history-state")
     if resume:
         state = json.loads((folder / "marathon_state.json").read_text(encoding="utf-8"))
         if state["config"] != config:
@@ -344,7 +346,19 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
             raise FileExistsError(f"Preserving prior marathon: {folder}")
         bank = read_registry(bank_file)
         folder.mkdir(parents=True)
+        history = (json.loads(Path(history_state).read_text(encoding="utf-8"))
+                   if adaptive else {})
+        historical_successes = sorted(_historical_wins(history)) if adaptive else []
+        if adaptive:
+            historical_successes = sorted(set(historical_successes) | {
+                n for n in range(2,1001)
+                if str(n) in history.get("initial_sides", {}) and
+                float(bank["problems"][str(n)]["side"]) <
+                float(history["initial_sides"][str(n)]) - 1e-9})
+            if not historical_successes:
+                raise ValueError("No historical successes found in phase-one state or registry")
         state = {
+            "historical_successes": historical_successes,
             "created_at": _now(), "config": config,
             "initial_sides": {str(n): float(bank["problems"][str(n)]["side"])
                               for n in range(1, 1001)},
@@ -389,11 +403,13 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
     try:
         while time.monotonic() < end - 20 and len(state["jobs"]) < max_tasks:
             bank = read_registry(bank_file)
-            chosen = _choose(bank, state, config)
+            chosen = (_choose_adaptive(bank,state,config) if adaptive
+                      else _choose(bank,state,config))
             if chosen is None:
                 print("MARATHON_NO_MORE_TARGETS", flush=True)
                 break
-            n, method, source_file = chosen
+            n, method, source_file = chosen[:3]
+            selection = chosen[3] if adaptive else "balanced"
             number = len(state["jobs"]) + 1
             job_id = f"marathon-{seed}-{number:04d}-n{n:04d}-{method}"
             job_folder = folder / f"job_{number:04d}_n{n:04d}_{method}"
@@ -536,13 +552,24 @@ def main():
         bank = read_registry(a.registry)
         state = {"jobs": [], "best_files": {}}
         config = {"min_n": a.min_n, "max_n": a.max_n}
+        if a.adaptive:
+            if not a.history_state:
+                p.error("--adaptive requires --history-state")
+            history = json.loads(Path(a.history_state).read_text(encoding="utf-8"))
+            state["initial_sides"] = {str(n): float(bank["problems"][str(n)]["side"])
+                                      for n in range(1,1001)}
+            state["historical_successes"] = sorted(set(_historical_wins(history)) | {
+                n for n in range(2,1001)
+                if str(n) in history.get("initial_sides", {}) and
+                float(bank["problems"][str(n)]["side"]) <
+                float(history["initial_sides"][str(n)]) - 1e-9})
         print("MARATHON_PLAN (initial registry; later choices adapt to results)")
         for i in range(20):
             choice = (_choose_adaptive(bank,state,config) if a.adaptive
                       else _choose(bank, state, config))
             if choice is None:
                 break
-            n, method, source_file = choice
+            n, method, source_file = choice[:3]
             print(f"{i+1:02d}. N={n} method={method}"
                   f" source_N={n-1 if method == 'growth' else n}")
             state["jobs"].append({"n": n, "method": method})
