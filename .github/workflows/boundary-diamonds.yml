@@ -1,0 +1,44 @@
+name: Gerit boundary diamonds N401-N404
+
+on:
+  push:
+    branches:
+      - feature/gerit-1000-integrated
+    paths:
+      - scripts/run_boundary_diamonds.py
+      - tests/test_boundary_diamonds.py
+      - .github/workflows/boundary-diamonds.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install scientific and visualization dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install matplotlib
+      - name: Compile and test geometry
+        run: |
+          python -m py_compile scripts/run_boundary_diamonds.py
+          python -m unittest tests.test_boundary_diamonds -v
+      - name: Generate 24 candidate arrangements and certified plots
+        run: |
+          python -u scripts/run_boundary_diamonds.py --max-d 4 --output-dir results/boundary_diamonds_401
+      - name: Upload all diagrams, candidates and numeric report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-boundary-diamonds-n401-n404
+          path: results/boundary_diamonds_401/
+          if-no-files-found: warn
+          retention-days: 21
