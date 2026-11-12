@@ -142,10 +142,9 @@ def _adaptive_candidates(bank, state, config):
             continue
         neighbor_dist = min((abs(n-k) for k in winners), default=1001)
         if neighbor_dist > 3 or neighbor_dist == 0:
-            # An already improved N can still benefit from a deeper search,
-            # but this stage focuses on adjacent, yet unimproved problems.
-            if neighbor_dist != 0:
-                continue
+            # Focus on unsolved neighbours; winners remain eligible for
+            # periodic exploratory deep runs.
+            continue
         delta = (side - side_floor)/side_floor
         closeness = 1.0/(1.0+neighbor_dist)
         # The gap between the N incumbent and the proven N-1 packing
