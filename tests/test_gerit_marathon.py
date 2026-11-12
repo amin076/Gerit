@@ -52,6 +52,8 @@ class MarathonTests(unittest.TestCase):
             str(n): self.bank["problems"][str(n)]["side"]
             for n in range(1,1001)}
         self.state["historical_successes"] = [52,68,85,229,327,364]
+        for n in self.state["historical_successes"]:
+            self.bank["problems"][str(n)]["side"] -= 0.04
         growth,deep = _adaptive_candidates(self.bank,self.state,self.conf)
         targets = {(row[3],row[4]) for row in growth+deep}
         self.assertIn((53,"growth"),targets)
