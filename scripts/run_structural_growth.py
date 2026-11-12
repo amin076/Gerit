@@ -64,8 +64,8 @@ def _insertion(founder,cap,rng,style):
         sites=np.vstack((sites,fixed))
     elif style%4==1:
         # Open a hole near a random existing square, allowing rotations.
-        ids=rng.choice(n,size=24,replace=False)
-        sites=np.vstack((sites,anchors[ids]+rng.normal(0,.3,size=(24,2))))
+        ids=rng.choice(n,size=min(24,n),replace=False)
+        sites=np.vstack((sites,anchors[ids]+rng.normal(0,.3,size=(len(ids),2))))
     elif style%4==2:
         # Explicit near-edge insertion with a free side coordinate.
         fixed=rng.uniform(.55,cap-.55,size=(24,2))
@@ -196,7 +196,7 @@ def run(*,n=968,registry="results/kaggle_baseline/best_registry.json",
                   f"certified_L={best.container_side if best else None}",flush=True)
     if best is None:
         print("GROWTH_FAILED: saved diverse near_*.npz checkpoints; "
-              "deep 500-generation run SKIPPED because no certified N seed.",flush=True)
+              "deep run SKIPPED because no certified N seed.",flush=True)
         return {"certified":False,"attempts":attempts,"near":len(archive)}
     print(f"GROWTH_CERTIFIED N={n} L={best.container_side:.12f}",flush=True)
     if deep_generations:
