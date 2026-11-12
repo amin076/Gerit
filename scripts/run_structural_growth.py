@@ -108,6 +108,7 @@ def _distinct(archive,poses,cap,quality):
             <.025):
             if quality<record["quality"]:
                 record.update(poses=poses.copy(),cap=cap,quality=quality)
+                archive.sort(key=lambda item:item["quality"])
             return
     archive.append({"poses":poses.copy(),"cap":cap,"quality":quality})
     archive.sort(key=lambda r:r["quality"])
