@@ -318,7 +318,8 @@ def _save_state(folder, bank_file, state):
 def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
         min_n=2, max_n=1000, growth_attempts=8, growth_iterations=130,
         deep_generations=50, deep_iterations=90,
-        seed=20261122, apply=False, resume=False, max_tasks=1000,\n        adaptive=False, history_state=None):
+        seed=20261122, apply=False, resume=False, max_tasks=1000,
+        adaptive=False, history_state=None):
     if not (hours > 0 and max_task_minutes > 0 and 2 <= min_n <= max_n <= 1000
             and growth_attempts > 0 and growth_iterations > 0
             and deep_generations > 0 and deep_iterations > 0
@@ -331,7 +332,8 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
                   growth_iterations=growth_iterations,
                   deep_generations=deep_generations,
                   deep_iterations=deep_iterations, seed=seed,
-                  apply=apply, registry=str(bank_file),\n                  adaptive=adaptive, history_state=str(Path(history_state).resolve()) if history_state else None)
+                  apply=apply, registry=str(bank_file),
+                  adaptive=adaptive, history_state=str(Path(history_state).resolve()) if history_state else None)
     if resume:
         state = json.loads((folder / "marathon_state.json").read_text(encoding="utf-8"))
         if state["config"] != config:
@@ -400,7 +402,8 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
             job_folder.mkdir(parents=True)
             active = {"id": job_id, "n": n, "method": method,
                       "folder": str(job_folder), "started_at": _now(),
-                      "founder_file": source_file,\n                      "selection": selection}
+                      "founder_file": source_file,
+                      "selection": selection}
             state["active"] = active
             _save_state(folder, bank_file, state)
             task_deadline = min(end, time.monotonic() + max_task_minutes * 60)
@@ -524,7 +527,9 @@ def main():
     p.add_argument("--apply", action="store_true")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--max-tasks", type=int, default=1000)
-    p.add_argument("--adaptive", action="store_true")\n    p.add_argument("--history-state", help="Phase-1 marathon_state.json")\n    p.add_argument("--plan-only", action="store_true",
+    p.add_argument("--adaptive", action="store_true")
+    p.add_argument("--history-state", help="Phase-1 marathon_state.json")
+    p.add_argument("--plan-only", action="store_true",
                    help="Print the first 20 initial target choices; do no work")
     a = p.parse_args()
     if a.plan_only:
@@ -533,7 +538,8 @@ def main():
         config = {"min_n": a.min_n, "max_n": a.max_n}
         print("MARATHON_PLAN (initial registry; later choices adapt to results)")
         for i in range(20):
-            choice = (_choose_adaptive(bank,state,config) if a.adaptive\n                      else _choose(bank, state, config))
+            choice = (_choose_adaptive(bank,state,config) if a.adaptive
+                      else _choose(bank, state, config))
             if choice is None:
                 break
             n, method, source_file = choice
@@ -547,7 +553,8 @@ def main():
         growth_iterations=a.growth_iterations,
         deep_generations=a.deep_generations,
         deep_iterations=a.deep_iterations, seed=a.seed,
-        apply=a.apply, resume=a.resume, max_tasks=a.max_tasks,\n        adaptive=a.adaptive, history_state=a.history_state)
+        apply=a.apply, resume=a.resume, max_tasks=a.max_tasks,
+        adaptive=a.adaptive, history_state=a.history_state)
 
 
 if __name__ == "__main__":
