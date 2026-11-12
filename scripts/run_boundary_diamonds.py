@@ -120,6 +120,10 @@ def run(output_dir,registry=None,max_d=4):
  if registry and Path(registry).is_file():
   b=json.loads(Path(registry).read_text(encoding="utf-8"))
   previous={n:float(b["problems"][str(n)]["side"]) for n in range(401,405)}
+ if not previous:
+  from gerit.four_corner_center_45 import four_corner_center_45
+  previous={n:21.0 for n in range(401,405)}
+  previous[401]=four_corner_center_45(401).container_side
  rows=[]
  for d in range(1,max_d+1):
   n=400+d
@@ -137,7 +141,7 @@ def run(output_dir,registry=None,max_d=4):
       "boundary_diamond_study",side))
     row.update(valid=bool(verdict.valid),validator=verdict.reason,
                side=side,relocated_squares=moved,offset=list(offset),
-               improved=side<previous.get(n,math.inf)-1e-10)
+               improved=bool(verdict.valid and side<previous[n]-1e-10))
     if verdict.valid:
      filename=f"n{n}_{name}"
      (output/(filename+".json")).write_text(json.dumps(dict(
@@ -149,7 +153,7 @@ def run(output_dir,registry=None,max_d=4):
                  f"N={n}, diamonds={d}, {name}, L={side:.6f}",d)
    rows.append(row)
    print(f"CASE N={n} {name} valid={row['valid']} "
-         f"L={row.get('side')} improved={row.get('improved',False)}",flush=True)
+         f"L={row.get('side')} reason={row.get('validator')} improved={row.get('improved',False)}",flush=True)
  summary=dict(method="boundary_diamond_discrete_relocation",
               experimental=True,registry_modified=False,
               valid=sum(r["valid"] for r in rows),
