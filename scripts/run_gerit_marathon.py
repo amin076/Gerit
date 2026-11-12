@@ -95,6 +95,94 @@ def _choose(bank, state, config):
     return None
 
 
+def _historical_wins(history):
+    """Use actual improvements from the previous marathon, never an
+    imagined success list. Each entry is checked against its starting side.
+    """
+    initial = history.get("initial_sides", {})
+    wins = set()
+    for key in history.get("best_files", {}):
+        try:
+            n = int(key)
+        except (TypeError, ValueError):
+            continue
+        if 2 <= n <= 1000 and str(n) in initial:
+            wins.add(n)
+    # Derive additional wins recorded by downward propagation using the
+    # persisted current registry comparison in _adaptive_candidates.
+    return wins
+
+
+def _adaptive_candidates(bank, state, config):
+    """Rank nearby targets by observed improvement and attainable gain.
+
+    A candidate is not necessarily solvable: this is an experiment
+    scheduler, not a proof of feasibility.
+    """
+    history = state.get("historical_successes", [])
+    lo, hi = config["min_n"], config["max_n"]
+    attempted = {(int(j["n"]), j["method"]) for j in state["jobs"]}
+    count_by_band = {}
+    for j in state["jobs"]:
+        band = (int(j["n"]) - 1) // 100
+        count_by_band[band] = count_by_band.get(band, 0) + 1
+    growth, deep = [], []
+    # First marathon winners, plus improvements that arrive dynamically
+    # while the adaptive phase progresses.
+    base_sides = state["initial_sides"]
+    winners = {int(n) for n in history}
+    winners.update(
+        n for n in range(2, 1001)
+        if float(bank["problems"][str(n)]["side"])
+        < float(base_sides[str(n)]) - 1e-9)
+    for n in range(max(2, lo), hi+1):
+        side, _ = _best_available(bank, state, n)
+        side_floor = math.sqrt(n)
+        if side <= side_floor + 1e-5:
+            continue
+        neighbor_dist = min((abs(n-k) for k in winners), default=1001)
+        if neighbor_dist > 3 or neighbor_dist == 0:
+            # An already improved N can still benefit from a deeper search,
+            # but this stage focuses on adjacent, yet unimproved problems.
+            if neighbor_dist != 0:
+                continue
+        delta = (side - side_floor)/side_floor
+        closeness = 1.0/(1.0+neighbor_dist)
+        # The gap between the N incumbent and the proven N-1 packing
+        # is especially informative for structural growth.
+        founder_side, founder_file = _best_available(bank, state, n-1)
+        advantage = side - founder_side
+        band_count = count_by_band.get((n-1)//100, 0)
+        rank = (-closeness, -delta, band_count, n)
+        if advantage > 0.002 and (n,"growth") not in attempted:
+            growth.append((*rank,"growth",founder_file))
+        if delta > 0.002 and (n,"deep") not in attempted:
+            deep.append((*rank,"deep",None))
+    growth.sort()
+    deep.sort()
+    return growth,deep
+
+
+def _choose_adaptive(bank,state,config):
+    """Three local tasks, then one global exploration task.
+
+    The global slot uses the original balanced scheduler, but excludes
+    locally attempted work through the shared persisted job ledger.
+    """
+    local_growth,local_deep = _adaptive_candidates(bank,state,config)
+    if len(state["jobs"])%4 == 3:
+        exploration=_choose(bank,state,config)
+        if exploration:
+            return (*exploration, "explore")
+    groups = (local_deep,local_growth) if len(state["jobs"])%3==2 else (local_growth,local_deep)
+    for group in groups:
+        if group:
+            _,_,_,n,method,source_file=group[0]
+            return n,method,source_file,"focus"
+    exploration=_choose(bank,state,config)
+    return (*exploration,"explore") if exploration else None
+
+
 def _worker(argv, logfile, deadline):
     """Stream subprocess logs to CMD and enforce a monotonic wall-clock cap.
 
@@ -231,7 +319,7 @@ def _save_state(folder, bank_file, state):
 def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
         min_n=2, max_n=1000, growth_attempts=8, growth_iterations=130,
         deep_generations=50, deep_iterations=90,
-        seed=20261122, apply=False, resume=False, max_tasks=1000):
+        seed=20261122, apply=False, resume=False, max_tasks=1000,\n        adaptive=False, history_state=None):
     if not (hours > 0 and max_task_minutes > 0 and 2 <= min_n <= max_n <= 1000
             and growth_attempts > 0 and growth_iterations > 0
             and deep_generations > 0 and deep_iterations > 0
@@ -244,7 +332,7 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
                   growth_iterations=growth_iterations,
                   deep_generations=deep_generations,
                   deep_iterations=deep_iterations, seed=seed,
-                  apply=apply, registry=str(bank_file))
+                  apply=apply, registry=str(bank_file),\n                  adaptive=adaptive, history_state=str(Path(history_state).resolve()) if history_state else None)
     if resume:
         state = json.loads((folder / "marathon_state.json").read_text(encoding="utf-8"))
         if state["config"] != config:
@@ -313,7 +401,7 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
             job_folder.mkdir(parents=True)
             active = {"id": job_id, "n": n, "method": method,
                       "folder": str(job_folder), "started_at": _now(),
-                      "founder_file": source_file}
+                      "founder_file": source_file,\n                      "selection": selection}
             state["active"] = active
             _save_state(folder, bank_file, state)
             task_deadline = min(end, time.monotonic() + max_task_minutes * 60)
@@ -401,7 +489,7 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
             state.pop("active", None)
             _save_state(folder, bank_file, state)
             summary = _summary(bank_file, state)
-            print(f"MARATHON_TASK {number} N={n} method={method} "
+            print(f"MARATHON_TASK {number} N={n} method={method} selection={selection} "
                   f"status={active['status']} improved={summary['improved_problems']} "
                   f"score={summary['projected_score']:.12f} "
                   f"remaining_minutes={(end - time.monotonic())/60:.1f}",
@@ -437,7 +525,7 @@ def main():
     p.add_argument("--apply", action="store_true")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--max-tasks", type=int, default=1000)
-    p.add_argument("--plan-only", action="store_true",
+    p.add_argument("--adaptive", action="store_true")\n    p.add_argument("--history-state", help="Phase-1 marathon_state.json")\n    p.add_argument("--plan-only", action="store_true",
                    help="Print the first 20 initial target choices; do no work")
     a = p.parse_args()
     if a.plan_only:
@@ -446,7 +534,7 @@ def main():
         config = {"min_n": a.min_n, "max_n": a.max_n}
         print("MARATHON_PLAN (initial registry; later choices adapt to results)")
         for i in range(20):
-            choice = _choose(bank, state, config)
+            choice = (_choose_adaptive(bank,state,config) if a.adaptive\n                      else _choose(bank, state, config))
             if choice is None:
                 break
             n, method, source_file = choice
@@ -460,7 +548,7 @@ def main():
         growth_iterations=a.growth_iterations,
         deep_generations=a.deep_generations,
         deep_iterations=a.deep_iterations, seed=a.seed,
-        apply=a.apply, resume=a.resume, max_tasks=a.max_tasks)
+        apply=a.apply, resume=a.resume, max_tasks=a.max_tasks,\n        adaptive=a.adaptive, history_state=a.history_state)
 
 
 if __name__ == "__main__":
