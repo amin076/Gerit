@@ -262,6 +262,10 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
             "initial_score": float(bank["total_score"]),
             "best_files": {}, "jobs": [],
         }
+    if apply and not resume:
+        import shutil
+        shutil.copy2(bank_file, folder / "registry_before_marathon.json")
+        print(f"REGISTRY_BACKUP {folder / 'registry_before_marathon.json'}", flush=True)
     _save_state(folder, bank_file, state)
     start = time.monotonic()
     end = start + hours * 3600
@@ -387,7 +391,23 @@ def main():
     p.add_argument("--apply", action="store_true")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--max-tasks", type=int, default=1000)
+    p.add_argument("--plan-only", action="store_true",
+                   help="Print the first 20 initial target choices; do no work")
     a = p.parse_args()
+    if a.plan_only:
+        bank = read_registry(a.registry)
+        state = {"jobs": [], "best_files": {}}
+        config = {"min_n": a.min_n, "max_n": a.max_n}
+        print("MARATHON_PLAN (initial registry; later choices adapt to results)")
+        for i in range(20):
+            choice = _choose(bank, state, config)
+            if choice is None:
+                break
+            n, method, source_file = choice
+            print(f"{i+1:02d}. N={n} method={method}"
+                  f" source_N={n-1 if method == 'growth' else n}")
+            state["jobs"].append({"n": n, "method": method})
+        return
     run(registry=a.registry, output_dir=a.output_dir, hours=a.hours,
         max_task_minutes=a.max_task_minutes, min_n=a.min_n,
         max_n=a.max_n, growth_attempts=a.growth_attempts,
