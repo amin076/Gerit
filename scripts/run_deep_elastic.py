@@ -126,7 +126,7 @@ def _ranking(d):
 
 def optimize(*,registry,n=230,generations=900,iterations=160,
              seed=2300,log_every=10,output_dir,apply=False,
-             resume_dir=None,shrink_max=.035,candidate_file=None):
+             resume_dir=None,shrink_max=.035,candidate_file=None,near_seed_file=None):
     if not 2<=n<=1000 or generations<1 or iterations<1 or log_every<1:
         raise ValueError("Invalid N or budgets")
     if not 0<shrink_max<=.2:
@@ -177,6 +177,32 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
                 near_cap=l
                 near_diag=feasibility_diagnostics(array,l)
         resumed_from=str(src)
+    if near_seed_file is not None:
+        # A near-feasible N-pose from the N-1 growth phase is deliberately
+        # INVALID and must never be used as a certified incumbent. It is
+        # nevertheless a valuable starting point for collision repair.
+        with np.load(near_seed_file,allow_pickle=False) as obj:
+            if "source_n" not in obj or "target_n" not in obj:
+                raise ValueError("Growth near-seed lacks N-1 provenance")
+            if int(obj["source_n"])!=n-1 or int(obj["target_n"])!=n:
+                raise ValueError("Growth near-seed is not N-1 -> N")
+            candidate_near=np.array(obj["poses"],dtype=float)
+            candidate_cap=float(obj["side_cap"])
+        if (candidate_near.shape!=(n,3)
+            or not np.isfinite(candidate_near).all()
+            or not math.sqrt(n)<candidate_cap<best.container_side):
+            raise ValueError("Invalid near-seed dimensions, values, or cap")
+        initial_diag=feasibility_diagnostics(candidate_near,candidate_cap)
+        # Even if this is worse than resumed near, both states are preserved
+        # on disk. Only replace the in-memory near archive if ranked better.
+        if near is None or _ranking(initial_diag)<_ranking(near_diag):
+            near=candidate_near
+            near_cap=candidate_cap
+            near_diag=initial_diag
+        print(f"GROWTH_NEAR_SEED source_N={n-1} target_N={n} "
+              f"cap={candidate_cap:.12f} "
+              f"overlaps={initial_diag['overlap_pairs']} "
+              f"outside={initial_diag['outside_squares']}",flush=True)
     rng=np.random.default_rng(seed)
     # Reserve output only after validation; never delete previous results.
     output.mkdir(parents=True)
@@ -186,6 +212,7 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         "seed":seed,"log_every":log_every,"shrink_max":shrink_max,
         "registry_start_side":current_registry_side,
         "resumed_from":resumed_from,"candidate_file":str(candidate_file) if candidate_file else None,
+        "near_seed_file":str(near_seed_file) if near_seed_file else None,
         "method":FAMILY})
     certified=0
     updates=0
@@ -212,7 +239,10 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
     lower_bound=math.sqrt(n)
     for generation in range(1,generations+1):
         mode=(generation-1)%5
-        if near is not None and generation%4==0:
+        use_near=(near is not None and
+                  (generation%5!=0 if near_seed_file is not None
+                   else generation%4==0))
+        if use_near:
             initial=near.copy()
         else:
             founder=elites[int(rng.integers(len(elites)))] if generation%7==0 else best
@@ -225,7 +255,7 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
         # Tighten by a spectrum of strict improvements, not merely <16.
         target_decrease=[.000025,.0002,.001,.005,.02,shrink_max][(generation-1)%6]
         cap=max(lower_bound+1e-4,best.container_side-target_decrease)
-        if near is not None and generation%4==0:
+        if use_near:
             cap=min(cap,near_cap)
         if cap<=lower_bound+1e-7:
             continue
@@ -323,6 +353,7 @@ def main():
     p.add_argument("--output-dir",default="results/kaggle_deep/n230_g900_s2300")
     p.add_argument("--resume-dir")
     p.add_argument("--candidate-file",help="Independently validated fixed-N starting packing from prior growth")
+    p.add_argument("--near-seed-file",help="N-1 -> N growth .npz poses for near-feasible warm start; must include source_n and target_n")
     p.add_argument("--apply",action="store_true")
     args=p.parse_args()
     optimize(registry=args.registry,n=args.n,
