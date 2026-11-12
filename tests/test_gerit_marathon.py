@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.run_gerit_marathon import _candidates, _choose, _worker, run
+from scripts.run_gerit_marathon import (_candidates, _choose, _worker, run,\n    _historical_wins, _adaptive_candidates, _choose_adaptive)
 
 
 def fake_bank():
@@ -46,6 +46,27 @@ class MarathonTests(unittest.TestCase):
             {"n": 10, "method": "growth"},
         ]
         self.assertEqual(_choose(self.bank,self.state,self.conf)[1],"deep")
+
+    def test_adaptive_targets_neighbours_and_explores_every_fourth(self):
+        self.state["initial_sides"] = {
+            str(n): self.bank["problems"][str(n)]["side"]
+            for n in range(1,1001)}
+        self.state["historical_successes"] = [52,68,85,229,327,364]
+        growth,deep = _adaptive_candidates(self.bank,self.state,self.conf)
+        targets = {(row[3],row[4]) for row in growth+deep}
+        self.assertIn((53,"growth"),targets)
+        self.assertIn((69,"growth"),targets)
+        self.assertIn((86,"growth"),targets)
+        self.assertIn((230,"growth"),targets)
+        self.assertIn((328,"growth"),targets)
+        self.assertIn((365,"growth"),targets)
+        self.assertEqual(_choose_adaptive(self.bank,self.state,self.conf)[3],"focus")
+        self.state["jobs"]=[{"n":i,"method":"deep"} for i in (5,15,25)]
+        self.assertEqual(_choose_adaptive(self.bank,self.state,self.conf)[3],"explore")
+
+    def test_history_recovers_wins_from_state(self):
+        history={"initial_sides":{"53":8.0},"best_files":{"53":"path","garbage":"x"}}
+        self.assertEqual(_historical_wins(history),{53})
 
     def test_worker_streams_to_log(self):
         with tempfile.TemporaryDirectory() as tmp:
