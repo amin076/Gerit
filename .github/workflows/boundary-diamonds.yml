@@ -30,7 +30,7 @@ jobs:
       - name: Compile and test geometry
         run: |
           python -m py_compile scripts/run_boundary_diamonds.py
-          python -m unittest tests.test_boundary_diamonds -v
+          python -m unittest discover -s tests -p 'test_boundary_diamonds.py' -v
       - name: Generate 24 candidate arrangements and certified plots
         run: |
           python -u scripts/run_boundary_diamonds.py --max-d 4 --output-dir results/boundary_diamonds_401
