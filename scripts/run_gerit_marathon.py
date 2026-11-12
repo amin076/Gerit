@@ -266,6 +266,30 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
         import shutil
         shutil.copy2(bank_file, folder / "registry_before_marathon.json")
         print(f"REGISTRY_BACKUP {folder / 'registry_before_marathon.json'}", flush=True)
+    if not resume:
+        # Carry forward already-certified late-stage experiments even if
+        # the operator forgot to offer them to the durable registry.
+        known = [
+            "results/kaggle_auto/deep_n967_g500/n0967/deep/best_valid.json",
+            "results/kaggle_auto/structural_n968_v1/deep/best_valid.json",
+            "results/kaggle_auto/structural_n969_g1000/deep/best_valid.json",
+        ]
+        for relative in known:
+            existing = ROOT / relative
+            if not existing.is_file():
+                continue
+            try:
+                candidate = load_packing_json(existing)
+                n_existing = int(candidate["n"])
+                if n_existing not in (967, 968, 969):
+                    raise ValueError("Unexpected problem in known seed")
+                result = _take_candidate(bank_file, state, existing, n_existing,
+                                         f"marathon-import-n{n_existing}", apply)
+                print(f"KNOWN_SEED N={n_existing} side={candidate['side']} "
+                      f"accepted={bool(result and result['registered'])}",
+                      flush=True)
+            except (ValueError, KeyError, OSError) as exc:
+                print(f"KNOWN_SEED_REJECTED {existing}: {exc}", flush=True)
     _save_state(folder, bank_file, state)
     start = time.monotonic()
     end = start + hours * 3600
