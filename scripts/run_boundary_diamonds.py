@@ -137,7 +137,7 @@ def run(output_dir,registry=None,max_d=4):
    if choices:
     p,moved,side,offset=min(choices,key=lambda item:(item[2],item[1]))
     verdict=independent_validate(Candidate(n,
-      tuple((repr(x),repr(y),repr(a)) for x,y,a in p),
+      tuple((repr(float(x)),repr(float(y)),repr(float(a))) for x,y,a in p),
       "boundary_diamond_study",side))
     row.update(valid=bool(verdict.valid),validator=verdict.reason,
                side=side,relocated_squares=moved,offset=list(offset),
