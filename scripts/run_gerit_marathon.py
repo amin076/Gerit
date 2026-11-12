@@ -366,6 +366,28 @@ def run(*, registry, output_dir, hours=5.5, max_task_minutes=12.0,
                                                  n, job_id, apply)
                         if result is not None:
                             job_result["best_file"] = str(candidate_file)
+                # A strong N result can improve neighbouring smaller N by
+                # removing boundary squares. This is independently checked
+                # and never replaces a stronger N-1 incumbent.
+                if apply and job_result["best_file"] and n > 2:
+                    candidate = load_packing_json(job_result["best_file"])
+                    candidate_side = float(candidate["side"])
+                    latest = read_registry(bank_file)
+                    low = max(2, n - 3)
+                    may_help = any(
+                        candidate_side < float(latest["problems"][str(k)]["side"]) - 1e-10
+                        for k in range(low, n))
+                    if may_help and time.monotonic() < task_deadline - 20:
+                        cmd = [sys.executable, "-u",
+                               str(ROOT / "scripts" / "run_downward_propagation.py"),
+                               "--registry", str(bank_file),
+                               "--source-n", str(n), "--min-n", str(low),
+                               "--candidate-file", str(job_result["best_file"]),
+                               "--report", str(job_folder / "downward.json"),
+                               "--apply"]
+                        job_result["stages"].append({
+                            "name": "downward", **_worker(
+                                cmd, job_folder / "downward.log", task_deadline)})
                 if any(x["timed_out"] for x in job_result["stages"]):
                     job_result["status"] = "time-limited"
                 elif any(x["returncode"] != 0 for x in job_result["stages"]):
