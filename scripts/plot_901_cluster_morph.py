@@ -52,7 +52,11 @@ def build_packing(a:int,b:int,clearance:float=4e-6, stage:str=""):
     if not math.isfinite(clearance) or not 1e-7<=clearance<=.001:
         raise ValueError("clearance must be in [1e-7, .001]")
     gap=math.sqrt(.5)+clearance
-    side=COUNT+gap
+    # Strictly positive inter-cell gaps avoid uncertifiable numerical contacts.
+    # Squares themselves remain exactly 1x1. The extra margin is ~3e-6.
+    spacing=1e-7
+    pitch=1.0+spacing
+    side=COUNT*pitch+gap
     left, right=a,COUNT-a
     bottom, top=b,COUNT-b
     groups={
@@ -62,13 +66,13 @@ def build_packing(a:int,b:int,clearance:float=4e-6, stage:str=""):
         "top_right":(right,top)
     }
     squares=[]
-    for x_start, ncols in ((0,left),(a+gap,right)):
-        for y_start, nrows in ((0,bottom),(b+gap,top)):
+    for x_start, ncols in ((0,left),(a*pitch+gap,right)):
+        for y_start, nrows in ((0,bottom),(b*pitch+gap,top)):
             for ix in range(ncols):
                 for iy in range(nrows):
-                    squares.append(Square(float(x_start+ix+.5),
-                                          float(y_start+iy+.5),0.))
-    squares.append(Square(a+gap/2,b+gap/2,DIAMOND_ANGLE))
+                    squares.append(Square(float(x_start+ix*pitch+.5),
+                                          float(y_start+iy*pitch+.5),0.))
+    squares.append(Square(a*pitch+gap/2,b*pitch+gap/2,DIAMOND_ANGLE))
     packing=Packing(tuple(squares),side)
     assert len(packing.squares)==901
     assert sum(w*h for w,h in groups.values())==900
@@ -93,7 +97,7 @@ def quick_validate(frame:MorphFrame):
             return False,f"overlap with square ({s.x},{s.y})"
     # Distinct integer-lattice cells in each of four disjoint rectangles.
     # This proof avoids O(900^2) brute force.
-    xleft={round(s.x-.5,9) for s in others if s.x<frame.a}
+    xleft={round(s.x-.5,8) for s in others if s.x<frame.a+1e-5}
     assert len(xleft)==frame.a
     return True,f"local SAT clear ({near} neighbors checked), blocks disjoint"
 
