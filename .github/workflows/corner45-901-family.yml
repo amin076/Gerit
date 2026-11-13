@@ -1,0 +1,40 @@
+name: Gerit N901 corner45 fixed-side family study
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - "scripts/run_corner45_901_family.py"
+      - "tests/test_corner45_901_family.py"
+      - ".github/workflows/corner45-901-family.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  n901-family:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile and test geometry
+        run: |
+          python -m py_compile scripts/run_corner45_901_family.py
+          python -m unittest discover -s tests -p "test_corner45_901_family.py" -v
+      - name: Sweep N901 to N905 using fixed baseline side
+        run: python -u scripts/run_corner45_901_family.py --max-n 905 --iterations 80 --output-dir results/corner45_n901_study
+      - name: Preserve images, candidates, diagnostics and summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-n901-corner-45-fixed-side-study
+          path: results/corner45_n901_study/
+          if-no-files-found: warn
+          retention-days: 21
