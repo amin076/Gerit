@@ -56,7 +56,7 @@ def build_packing(a:int,b:int,clearance:float=4e-6, stage:str=""):
     # Squares themselves remain exactly 1x1. The extra margin is ~3e-6.
     spacing=1e-7
     pitch=1.0+spacing
-    side=COUNT*pitch+gap
+    side=COUNT+(COUNT-1)*spacing+gap
     left, right=a,COUNT-a
     bottom, top=b,COUNT-b
     groups={
