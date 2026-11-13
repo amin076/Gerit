@@ -1,0 +1,31 @@
+name: Gerit center45 N5 N17 exact drawings
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - scripts/plot_center45_5_17.py
+      - .github/workflows/plot-center45-5-17.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install mpmath matplotlib pillow
+      - name: Generate two actual certified packings
+        run: python -u scripts/plot_center45_5_17.py
+      - name: Save figures and exact coordinates
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-center45-n5-n17-certified
+          path: results/center45_5_17/
