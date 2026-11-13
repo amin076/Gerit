@@ -135,14 +135,15 @@ def run(output,*,max_n=905,iterations=80):
  output=Path(output)
  if output.exists():raise FileExistsError("Existing output is protected: "+str(output))
  output.mkdir(parents=True)
- base=four_corner_center_45(901)
- cap=base.container_side
+ base=four_corner_center_45(901,spacing=1e-7,safety=1e-6)
+ # Fix the envelope to the reported N901 current-registry benchmark.
+ cap=30.707135181186562
  center=np.array([(s.x,s.y,s.angle) for s in base.squares])
- baseline=certify(center,cap,"center45_901")
+ baseline=certify(center,base.container_side,"center45_901")
  plot(center,cap,output/"n901_center_certified.png",
-      f"N901: certified center-45 founder, L={cap:.9f}")
+      f"N901: certified center-45 founder, envelope cap={cap:.9f}")
  rows=[]
- print(f"CENTER_BASELINE valid={baseline.valid} L={cap:.12f} reason={baseline.reason}",flush=True)
+ print(f"CENTER_BASELINE valid={baseline.valid} geometry_L={base.container_side:.12f} cap={cap:.12f} reason={baseline.reason}",flush=True)
  if not baseline.valid:raise ValueError(baseline.reason)
  for n in range(901,max_n+1):
   for position in ("upper_right","upper_left"):
@@ -157,7 +158,10 @@ def run(output,*,max_n=905,iterations=80):
    desired=np.array([cap-HALF-.003,cap-HALF-.003]) if position=="upper_right" else np.array([HALF+.003,cap-HALF-.003])
    # Map founder initially into candidate fixed-cap square and optimize.
    q=p.copy()
-   q[:,:2]*=cap/ENVELOPE
+   h0=.5*(np.abs(np.cos(q[:,2]))+np.abs(np.sin(q[:,2])))
+   # Do not compress 900 touching grid tiles simultaneously: move only
+   # vertices outside the fixed envelope inward before relaxation.
+   q[:,:2]=np.minimum(q[:,:2],cap-h0[:,None]-.0002)
    q=relax_corner(q,cap,desired,iterations=iterations)
    diagnostic=feasibility_diagnostics(q,cap)
    # Bounding dimension of the final geometry (not proof of feasibility).
