@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gerit | Square Packing Lab</title><style>
+:root{color-scheme:dark;font-family:Inter,system-ui,Arial,sans-serif;background:#0b1220;color:#e5edf8}*{box-sizing:border-box}body{margin:0}header{padding:15px 22px;border-bottom:1px solid #29354a;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}h1{font-size:20px;margin:0}small,.muted{color:#9aafcb}.shell{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:15px;padding:16px;max-width:1450px;margin:auto}.boardwrap{border:1px solid #34455b;background:#0f1a29;border-radius:12px;min-width:0;overflow:hidden;position:relative}.boardbar{display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap;background:#142137;border-bottom:1px solid #34455b;align-items:center}.boardbar button{padding:7px 10px}.stage{height:min(76vh,820px);min-height:420px;overflow:auto;touch-action:none}svg{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}.side{display:grid;align-content:start;gap:12px}.panel{border:1px solid #34455b;border-radius:12px;padding:14px;background:#142137}h2{font-size:14px;margin:0 0 12px;color:#d8e7ff}button{border:1px solid #405679;border-radius:8px;background:#243c61;color:#eff6ff;font:inherit;font-size:13px;padding:9px 10px;cursor:pointer}button:hover{background:#30527e}button:disabled{opacity:.4;cursor:default}button.accent{background:#2563eb;border-color:#3b82f6}button.danger{background:#4c2834;border-color:#8b4155}.row{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0}.row>*{flex:1}label{display:block;color:#b8c8dc;font-size:12px;margin-bottom:4px}input[type=number],input[type=text],select{background:#0d1a2e;border:1px solid #405679;border-radius:7px;color:white;padding:8px;width:100%;font:inherit}input[type=checkbox]{accent-color:#3b82f6}.twocol{display:grid;grid-template-columns:1fr 1fr;gap:8px}.value{font-variant-numeric:tabular-nums;font-size:14px;font-weight:650}#status{font-size:13px;line-height:1.65}#status.bad{color:#ff8792}#status.good{color:#80e7ba}.hint{font-size:12px;line-height:1.65;color:#b3c6df}#selectedLabel{font-size:13px;font-weight:700}kbd{background:#223551;padding:1px 5px;border-radius:4px}@media(max-width:880px){.shell{grid-template-columns:1fr}.stage{height:60vh;min-height:390px}.side{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+</style></head><body><header><div><h1>Gerit · Square Packing Lab</h1><small>Interactive unit-square packing workspace · free-lift dragging · offline HTML</small></div><span class="muted" id="headInfo">1 unit × 1 unit squares</span></header>
+<main class="shell"><section class="boardwrap"><div class="boardbar"><button class="accent" id="add">＋ Add 1 square</button><button id="add4">＋ Add 4</button><button id="fill">＋ Add 25</button><label for="startCount" style="margin:0;display:flex;align-items:center;gap:6px">Start with <input id="startCount" type="number" min="1" max="500" step="1" value="1" style="width:72px;padding:6px"></label><button id="newBoard" class="accent">New board</button><button id="five">Load exact 5-square packing</button><button id="demo">Load 26-square starter</button><button id="fit">Fit view</button><button id="remove" class="danger">Remove selected</button></div><div class="stage"><svg id="board" xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 10 10" aria-label="Rigid unit-square packing interactive grid"><defs><pattern id="minor" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M 1 0 L 0 0 0 1" fill="none" stroke="#425571" stroke-width="0.018"/></pattern></defs><rect id="gridBg" x="-100" y="-100" width="300" height="300" fill="url(#minor)"/><g id="art"></g><g id="overlay"></g></svg></div></section>
+<aside class="side"><section class="panel"><h2>Geometry / Score</h2><div id="status"></div><div class="row"><label style="margin:0"><input id="showBox" type="checkbox" checked> Show enclosing square</label></div><div class="row"><label style="margin:0"><input id="showGrid" type="checkbox" checked> Show 1×1 grid</label></div><div class="row"><label style="margin:0"><input id="magnet" type="checkbox" checked> Magnetic edge/corner contact (default ON)</label></div><div class="row"><label style="margin:0"><input id="snap" type="checkbox"> Snap positions to grid (optional)</label></div></section>
+<section class="panel"><h2>Selected square</h2><div id="selectedLabel" class="muted">Select a square</div><div class="twocol" style="margin-top:10px"><div><label for="x">Centre X</label><input id="x" type="number" step="0.001"></div><div><label for="y">Centre Y</label><input id="y" type="number" step="0.001"></div></div><div style="margin-top:10px"><label for="angle">Rotation (degrees)</label><input id="angle" type="number" step="1"></div><div class="row"><button id="ccw">↶ −5°</button><button id="cw">↷ +5°</button><button id="ccwFine">−0.1°</button><button id="cwFine">+0.1°</button></div><div class="row"><button id="rot45">45°</button><button id="rot0">0°</button><button id="duplicate">Duplicate</button></div><div class="hint">Drag a square to move it. Drag its circular handle to rotate it freely. Geometry is continuous; the grid is only a guide.</div></section>
+<section class="panel"><h2>Save / Load</h2><div class="row"><button id="undo">Undo</button><button id="redo">Redo</button></div><div class="row"><button id="save">Export JSON</button><button id="load">Import JSON</button><input id="upload" type="file" accept="application/json,.json" hidden></div><div class="row"><button id="png">Export PNG</button><button id="reset" class="danger">Clear board</button></div><div class="hint">Layouts are saved automatically in this browser when local storage is available. Use Start with + New board to reset to exactly N squares (1, 4, 25, 26, etc.). Add 4 / Add 25 instead adds that many to the current board. Each square always has side length exactly 1.</div></section>
+<section class="panel"><h2>Controls</h2><div class="hint">Click empty space to add a square. Select then use arrow keys to nudge by 0.05 units, Shift + arrow by 0.005 units; <kbd>[</kbd> and <kbd>]</kbd> rotate 1 degree. Mouse wheel zooms; drag empty space with the right mouse button to pan. Squares are rigid: motion and rotation stop at contact (edge contact is allowed). Magnetic contact is on by default; it attracts nearby corners and edges into contact when you release the mouse. Use Load exact 5-square packing to compare with the mathematical target 2.707106781.</div></section></aside></main>
+<script>
+(()=>{'use strict';
+const ns='http://www.w3.org/2000/svg';const $=id=>document.getElementById(id);const svg=$('board'),art=$('art'),over=$('overlay');const S={items:[],selected:null,drag:null,next:1,view:{x:-1,y:-1,w:10,h:10},history:[],redo:[]};
+function el(name,attrs,parent){const e=document.createElementNS(ns,name);for(const [k,v] of Object.entries(attrs||{}))e.setAttribute(k,v);if(parent)parent.appendChild(e);return e;}
+function snapshot(){return JSON.stringify({items:S.items,next:S.next});}
+function record(){S.history.push(snapshot());if(S.history.length>80)S.history.shift();S.redo=[];}
+function persist(){try{localStorage.setItem('gerit-square-lab-v2',snapshot())}catch(e){}}
+function restore(raw){const d=JSON.parse(raw);if(!Array.isArray(d.items)||d.items.length>5000)throw Error('Invalid layout');const items=d.items.map(i=>({id:Number(i.id),x:Number(i.x),y:Number(i.y),a:Number(i.a)}));if(items.some(i=>![i.id,i.x,i.y,i.a].every(Number.isFinite)))throw Error('Invalid square data');for(let j=0;j<items.length;j++)for(let k=j+1;k<items.length;k++)if(overlap(items[j],items[k]))throw Error('Layout contains overlapping squares #'+items[j].id+' and #'+items[k].id);S.items=items;S.next=Math.max(1,...items.map(i=>i.id+1));S.selected=null;render();persist();}
+function points(q){const c=Math.cos(q.a*Math.PI/180),s=Math.sin(q.a*Math.PI/180);return [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([x,y])=>({x:q.x+x*c-y*s,y:q.y+x*s+y*c}));}
+function bounds(){const p=S.items.flatMap(points);if(!p.length)return {minX:0,minY:0,maxX:0,maxY:0,w:0,h:0,side:0};const xs=p.map(v=>v.x),ys=p.map(v=>v.y);const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);return {minX,minY,maxX,maxY,w:maxX-minX,h:maxY-minY,side:Math.max(maxX-minX,maxY-minY)};}
+function overlap(a,b){const A=points(a),B=points(b);const axes=[];for(const poly of [A,B])for(let j=0;j<2;j++){const u=poly[j],v=poly[(j+1)%4];const dx=v.x-u.x,dy=v.y-u.y;axes.push({x:-dy,y:dx});}for(const ax of axes){const proj=P=>P.map(p=>p.x*ax.x+p.y*ax.y);const p=proj(A),q=proj(B);if(Math.min(...p)>=Math.max(...q)-1e-9||Math.min(...q)>=Math.max(...p)-1e-9)return false;}return true;}
+function canPlace(candidate,ignoreId=null){return S.items.every(other=>other.id===ignoreId||!overlap(candidate,other));}
+function freeSpot(x,y,a=0){const q={id:-1,x,y,a};if(canPlace(q))return {x,y};for(let ring=1;ring<=250;ring++){const step=.5;for(let k=-ring;k<=ring;k++){for(const [xx,yy] of [[k,-ring],[k,ring],[-ring,k],[ring,k]]){q.x=x+xx*step;q.y=y+yy*step;if(canPlace(q))return {x:q.x,y:q.y};}}}return null;}
+// Sweep the entire motion path, not merely its endpoint. No object can tunnel
+// through another object even when the mouse moves many pixels per event.
+function moveRigid(q,target){const from={x:q.x,y:q.y,a:q.a},dx=target.x-from.x,dy=target.y-from.y,da=target.a-from.a;const length=Math.hypot(dx,dy),angle=Math.abs(da)*Math.PI/180;
+ const steps=Math.max(1,Math.min(20000,Math.ceil((length+angle*.71)/.025)));
+ let safe=0;
+ const test=t=>canPlace({id:q.id,x:from.x+dx*t,y:from.y+dy*t,a:from.a+da*t},q.id);
+ for(let i=1;i<=steps;i++){const t=i/steps;if(!test(t)){let lo=safe,hi=t;for(let j=0;j<30;j++){const mid=(lo+hi)/2;if(test(mid))lo=mid;else hi=mid;}safe=Math.max(0,lo-1e-8);break;}safe=t;}
+ q.x=from.x+dx*safe;q.y=from.y+dy*safe;q.a=from.a+da*safe;return safe>=1-1e-9;
+}
+// Magnetic contact in continuous geometry. Find the nearest points
+// on polygon edges, then translate along their connecting vector until contact.
+// This works for arbitrarily rotated squares; the grid is not involved.
+function nearestOnSegment(p,a,b){const vx=b.x-a.x,vy=b.y-a.y;const t=Math.max(0,Math.min(1,((p.x-a.x)*vx+(p.y-a.y)*vy)/(vx*vx+vy*vy)));return {x:a.x+t*vx,y:a.y+t*vy};}
+function closestPolygons(A,B){let best={distance:Infinity,dx:0,dy:0};for(const [P,Q] of [[A,B],[B,A]])for(const p of P)for(let j=0;j<4;j++){const n=nearestOnSegment(p,Q[j],Q[(j+1)%4]);const dx=n.x-p.x,dy=n.y-p.y,distance=Math.hypot(dx,dy);if(distance<best.distance)best=P===A?{distance,dx,dy}:{distance,dx:-dx,dy:-dy};}return best;}
+function magnetize(q,range=.42){
+ if(!$('magnet').checked)return false;
+ // Recalculate each iteration so snapping to one square can continue toward
+ // a second, without ever passing through a rigid neighbour.
+ let changed=false;
+ for(let pass=0;pass<3;pass++){
+  const P=points(q),candidates=[];
+  for(const other of S.items){
+   if(other.id===q.id)continue;
+   const near=closestPolygons(P,points(other));
+   if(near.distance>1e-7&&near.distance<=range)candidates.push(near);
+  }
+  candidates.sort((a,b)=>a.distance-b.distance);
+  let snapped=false;
+  for(const n of candidates){
+   const before={...q};
+   // An exact vertex-to-edge translation is permitted when it does not overlap.
+   const exact={...q,x:q.x+n.dx,y:q.y+n.dy};
+   if(canPlace(exact,q.id)){q.x=exact.x;q.y=exact.y;changed=snapped=true;break;}
+   moveRigid(q,exact);
+   const gained=Math.hypot(q.x-before.x,q.y-before.y);
+   if(gained>=n.distance-1e-6){changed=snapped=true;break;}
+   q.x=before.x;q.y=before.y;q.a=before.a;
+  }
+  if(!snapped)break;
+ }
+ return changed;
+}
+function overlaps(){const hits=new Set();let pairs=0;for(let i=0;i<S.items.length;i++)for(let j=i+1;j<S.items.length;j++)if(overlap(S.items[i],S.items[j])){hits.add(S.items[i].id);hits.add(S.items[j].id);pairs++;}return {hits,pairs};}
+function selected(){return S.items.find(q=>q.id===S.selected);}
+function color(id){const h=(id*47)%360;return `hsl(${h},66%,67%)`;}
+function render(){svg.setAttribute('viewBox',`${S.view.x} ${S.view.y} ${S.view.w} ${S.view.h}`);$('gridBg').style.display=$('showGrid').checked?'':'none';art.replaceChildren();over.replaceChildren();const b=bounds(),hits=overlaps();if(S.items.length&&$('showBox').checked){el('rect',{x:b.minX,y:b.minY,width:b.side,height:b.side,fill:'#7cb0ff', 'fill-opacity':'.05',stroke:'#f8c35b','stroke-width':'.045','stroke-dasharray':'.13 .08','pointer-events':'none'},art);}
+for(const q of S.items){const ps=points(q);const sel=q.id===S.selected;el('polygon',{points:ps.map(p=>p.x+','+p.y).join(' '),fill:hits.hits.has(q.id)?'#f1747e':color(q.id),'fill-opacity':sel?'.91':'.78',stroke:sel?'#fff':'#15243a','stroke-width':sel?'.055':'.026','data-id':q.id,style:'cursor:grab;'},art);el('text',{x:q.x,y:q.y,fill:'#102031','text-anchor':'middle','dominant-baseline':'central','font-size':'.3','font-weight':'750','pointer-events':'none'},art).textContent=q.id;}
+const q=selected();if(q){const theta=(q.a-90)*Math.PI/180,r=0.83,h={x:q.x+Math.cos(theta)*r,y:q.y+Math.sin(theta)*r};el('line',{x1:q.x,y1:q.y,x2:h.x,y2:h.y,stroke:'#fff','stroke-width':'.035','stroke-dasharray':'.065 .045','pointer-events':'none'},over);el('circle',{cx:h.x,cy:h.y,r:'.13',fill:'#facc15',stroke:'#0e1726','stroke-width':'.035','data-rotate':q.id,style:'cursor:crosshair;'},over);}
+$('selectedLabel').textContent=q?'Square #'+q.id:'Select a square';for(const id of ['x','y','angle']){$(id).disabled=!q;}if(q&&document.activeElement!==$('x')&&document.activeElement!==$('y')&&document.activeElement!==$('angle')){$('x').value=q.x.toFixed(4);$('y').value=q.y.toFixed(4);$('angle').value=((q.a%360)+360)%360;}
+const density=b.side?100*S.items.length/(b.side*b.side):0;const good=hits.pairs===0;$('status').className=good?'good':'bad';$('status').innerHTML=`<div>Squares: <span class="value">${S.items.length}</span></div><div>Bounding square side: <span class="value">${b.side.toFixed(9)}</span></div><div>Width × height: <span class="value">${b.w.toFixed(6)} × ${b.h.toFixed(6)}</span></div><div>Packing density: <span class="value">${density.toFixed(2)}%</span></div><div>${good?'✓ No overlaps':'⚠ Overlapping pairs: '+hits.pairs}</div><small>${good?'Rigid collision enabled · edge contact allowed.':'Invalid imported or stored geometry.'}</small>`;persist();}
+function pt(evt){const m=svg.getScreenCTM();if(m){const p=svg.createSVGPoint();p.x=evt.clientX;p.y=evt.clientY;const q=p.matrixTransform(m.inverse());return {x:q.x,y:q.y};}const r=svg.getBoundingClientRect();return {x:S.view.x+(evt.clientX-r.left)/r.width*S.view.w,y:S.view.y+(evt.clientY-r.top)/r.height*S.view.h};}
+function add(x,y,a=0,rec=true){const spot=freeSpot(x,y,a);if(!spot){alert('No free space found for a new square.');return null;}if(rec)record();const q={id:S.next++,x:spot.x,y:spot.y,a};S.items.push(q);S.selected=q.id;magnetize(q);render();return q;}
+function fit(){const b=bounds(),side=Math.max(7,b.side+2);S.view={x:(b.minX+b.maxX-side)/2,y:(b.minY+b.maxY-side)/2,w:side,h:side};render();}
+function edit(fn){const q=selected();if(!q)return;record();const target={...q};fn(target);moveRigid(q,target);magnetize(q);render();}
+function addBatch(count){if(!Number.isInteger(count)||count<1||count>500){alert('Choose a whole number between 1 and 500.');return;}record();const first=S.next;for(let k=0;k<count;k++){const index=S.items.length,cols=Math.ceil(Math.sqrt(index+1));const x=index%cols+.5,y=Math.floor(index/cols)+.5;const spot=freeSpot(x,y);if(!spot)break;S.items.push({id:S.next++,x:spot.x,y:spot.y,a:0});}S.selected=S.items.some(q=>q.id===first)?first:null;fit();}
+function newBoard(count){if(!Number.isInteger(count)||count<1||count>500){alert('Choose a whole number between 1 and 500.');return;}if(S.items.length&&!confirm('Replace the current layout with '+count+' square(s)?'))return;record();S.items=[];S.next=1;S.selected=null;const columns=Math.ceil(Math.sqrt(count));for(let i=0;i<count;i++)S.items.push({id:S.next++,x:i%columns+.5,y:Math.floor(i/columns)+.5,a:0});S.selected=1;fit();}
+$('add').onclick=()=>{const cx=S.view.x+S.view.w/2,cy=S.view.y+S.view.h/2;add(cx,cy);};$('add4').onclick=()=>addBatch(4);$('fill').onclick=()=>addBatch(25);$('newBoard').onclick=()=>newBoard(Number($('startCount').value));$('startCount').addEventListener('keydown',e=>{if(e.key==='Enter')$('newBoard').click();});
+$('five').onclick=()=>{
+ if(S.items.length&&!confirm('Replace the current layout with the exact five-square example?'))return;
+ record();S.items=[];S.next=1;
+ const a=1/Math.sqrt(2),L=2+a,hi=L-.5,mid=L/2;
+ for(const [x,y] of [[.5,.5],[hi,.5],[.5,hi],[hi,hi]])S.items.push({id:S.next++,x,y,a:0});
+ S.items.push({id:S.next++,x:mid,y:mid,a:45});
+ S.selected=5;fit();
+};
+$('demo').onclick=()=>{record();S.items=[];S.next=1;for(let i=0;i<25;i++)S.items.push({id:S.next++,x:i%5+.5,y:Math.floor(i/5)+.5,a:0});S.items.push({id:S.next++,x:5.8,y:3.6,a:45});S.selected=26;fit();};
+$('fit').onclick=fit;$('remove').onclick=()=>{if(S.selected===null)return;record();S.items=S.items.filter(q=>q.id!==S.selected);S.selected=null;render();};$('duplicate').onclick=()=>{const q=selected();if(q)add(q.x+1.1,q.y+1.1,q.a)};
+for(const [id,da] of [['ccw',-5],['cw',5],['ccwFine',-.1],['cwFine',.1]])$(id).onclick=()=>edit(q=>{q.a+=da});$('rot0').onclick=()=>edit(q=>q.a=0);$('rot45').onclick=()=>edit(q=>q.a=45);
+for(const [id,k] of [['x','x'],['y','y'],['angle','a']]){let before='';$(id).addEventListener('focus',()=>before=snapshot());$(id).addEventListener('change',()=>{const q=selected(),v=Number($(id).value);if(!q||!Number.isFinite(v))return;S.history.push(before);S.redo=[];const target={...q,[k]:v};moveRigid(q,target);magnetize(q);render();});}
+$('showGrid').onchange=render;$('showBox').onchange=render;$('snap').onchange=render;$('magnet').onchange=()=>{if($('magnet').checked&&selected())magnetize(selected());render();};
+// Dragging is a temporary lift: intersections are allowed only while held.
+// On release, accept only a geometrically valid 1x1 placement.
+svg.addEventListener('contextmenu',e=>e.preventDefault());
+svg.addEventListener('pointerdown',e=>{
+ if(e.button!==0&&e.button!==2)return;
+ const target=e.target,p=pt(e);
+ const idAttr=target.getAttribute('data-id');
+ if(e.button===2&&idAttr!==null){
+  S.selected=Number(idAttr);S.freeOnce=S.selected;render();
+  e.preventDefault();return;
+ }
+ if(e.button===2){S.drag={mode:'pan',p,view:{...S.view}};}
+ else if(target.hasAttribute('data-rotate')){
+  const q=S.items.find(q=>q.id===Number(target.getAttribute('data-rotate')));
+  record();S.drag={mode:'rotate',id:q.id,origin:{x:q.x,y:q.y,a:q.a},offset:q.a-Math.atan2(p.y-q.y,p.x-q.x)*180/Math.PI};
+ }else if(idAttr!==null){
+  const q=S.items.find(q=>q.id===Number(idAttr));
+  S.selected=q.id;record();
+  S.drag={mode:'move',id:q.id,origin:{x:q.x,y:q.y,a:q.a},dx:q.x-p.x,dy:q.y-p.y};
+  render();
+ }else{
+  const q=add(p.x,p.y);
+  if(q)S.drag={mode:'move',id:q.id,origin:{x:q.x,y:q.y,a:q.a},dx:0,dy:0};
+ }
+ try{svg.setPointerCapture(e.pointerId)}catch(err){}
+ e.preventDefault();
+});
+svg.addEventListener('pointermove',e=>{
+ if(!S.drag)return;
+ const p=pt(e),d=S.drag;
+ if(d.mode==='pan'){
+  S.view.x=d.view.x-(p.x-d.p.x);S.view.y=d.view.y-(p.y-d.p.y);
+ }else{
+  const q=S.items.find(i=>i.id===d.id);if(!q)return;
+  if(d.mode==='move'){
+   let x=p.x+d.dx,y=p.y+d.dy;
+   if($('snap').checked&&!e.shiftKey){x=Math.round(x*2)/2;y=Math.round(y*2)/2;}
+   q.x=x;q.y=y; // Lifted square may cross occupied squares while dragging.
+  }else if(d.mode==='rotate'){
+   q.a=Math.atan2(p.y-q.y,p.x-q.x)*180/Math.PI+d.offset;
+  }
+ }
+ render();e.preventDefault();
+});
+function finish(e,cancel=false){
+ const d=S.drag;S.drag=null;
+ if(!d)return;
+ if(d.mode!=='move'&&d.mode!=='rotate')return;
+ const q=S.items.find(i=>i.id===d.id);
+ if(!q)return;
+ const wasFree=S.freeOnce===q.id;
+ S.freeOnce=null;
+ if(cancel||!canPlace(q,q.id)){
+  Object.assign(q,d.origin);
+  render();
+  if(!cancel){$('status').textContent='That landing position overlaps another square; the move was reverted. Drag through the group and release in a free space.';$('status').className='bad';}
+  return;
+ }
+ // Shift or one-time right-click releases magnetic snapping for this placement.
+ if(!e?.shiftKey&&!wasFree)magnetize(q);
+ render();
+}
+svg.addEventListener('pointerup',e=>finish(e));
+svg.addEventListener('pointercancel',e=>finish(e,true));
+svg.addEventListener('wheel',e=>{e.preventDefault();const p=pt(e),sc=e.deltaY>0?1.15:1/1.15;S.view.x=p.x-(p.x-S.view.x)*sc;S.view.y=p.y-(p.y-S.view.y)*sc;S.view.w*=sc;S.view.h*=sc;render();},{passive:false});
+window.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;const q=selected();if(!q)return;const step=e.shiftKey?.005:.05;const moves={ArrowLeft:['x',-step],ArrowRight:['x',step],ArrowUp:['y',-step],ArrowDown:['y',step],'[':['a',-1],']':['a',1]};if(moves[e.key]){e.preventDefault();const [axis,amount]=moves[e.key];edit(v=>v[axis]+=amount);}else if(e.key==='Delete'||e.key==='Backspace')$('remove').click();});
+$('undo').onclick=()=>{if(!S.history.length)return;S.redo.push(snapshot());restore(S.history.pop());};$('redo').onclick=()=>{if(!S.redo.length)return;S.history.push(snapshot());restore(S.redo.pop());};
+function download(data,name,type){const url=URL.createObjectURL(new Blob([data],{type}));const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+$('save').onclick=()=>download(JSON.stringify({format:'gerit-square-lab-v2',items:S.items.map(({id,x,y,a})=>({id,x,y,angle:a,a})),score:bounds().side},null,2),'gerit-layout.json','application/json');$('load').onclick=()=>$('upload').click();$('upload').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{record();restore(await f.text());fit();}catch(err){alert('Could not open layout: '+err.message)}e.target.value='';};
+$('png').onclick=()=>{const b=bounds();const pad=1;const x=b.minX-pad,y=b.minY-pad,dim=Math.max(6,b.side+2);const copy=svg.cloneNode(true);copy.setAttribute('viewBox',`${x} ${y} ${dim} ${dim}`);copy.setAttribute('width','1200');copy.setAttribute('height','1200');copy.setAttribute('xmlns',ns);const src=new XMLSerializer().serializeToString(copy);const img=new Image();const blob=new Blob([src],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);img.onload=()=>{const c=document.createElement('canvas');c.width=1200;c.height=1200;const ctx=c.getContext('2d');ctx.fillStyle='#0f1a29';ctx.fillRect(0,0,1200,1200);ctx.drawImage(img,0,0);c.toBlob(out=>{if(out){const u=URL.createObjectURL(out);const a=document.createElement('a');a.href=u;a.download='gerit-layout.png';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}URL.revokeObjectURL(url);},'image/png');};img.src=url;};
+$('reset').onclick=()=>{if(!confirm('Clear all squares?'))return;record();S.items=[];S.selected=null;S.next=1;render();};
+try{const saved=localStorage.getItem('gerit-square-lab-v2');if(saved)restore(saved);else {S.items.push({id:S.next++,x:.5,y:.5,a:0});S.selected=1;}}catch(err){}fit();
+})();
+</script></body></html>
