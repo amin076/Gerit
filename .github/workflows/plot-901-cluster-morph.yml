@@ -1,0 +1,41 @@
+name: Gerit N901 EXACT cluster morph
+
+on:
+  push:
+    branches: ["feature/gerit-1000-integrated"]
+    paths:
+      - scripts/plot_901_cluster_morph.py
+      - tests/test_901_cluster_morph.py
+      - .github/workflows/plot-901-cluster-morph.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-901:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install exact validator and plotting
+        run: python -m pip install mpmath matplotlib
+      - name: Test real geometry and three independent interval certifications
+        run: |
+          python -m py_compile scripts/plot_901_cluster_morph.py
+          python -m unittest discover -s tests -p "test_901_cluster_morph.py" -v
+      - name: Generate all 29 certified N901 frames
+        run: |
+          python -u scripts/plot_901_cluster_morph.py --output-dir results/cluster_morph_901_exact
+      - name: Upload exact square coordinates and images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-n901-exact-unit-square-morph
+          path: results/cluster_morph_901_exact/
+          if-no-files-found: warn
+          retention-days: 21
