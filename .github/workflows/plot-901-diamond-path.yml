@@ -1,0 +1,38 @@
+name: Gerit N901 frozen-diamond path images
+
+on:
+  push:
+    branches:
+      - feature/gerit-1000-integrated
+    paths:
+      - scripts/plot_901_diamond_path.py
+      - .github/workflows/plot-901-diamond-path.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install plotting dependency
+        run: python -m pip install matplotlib
+      - name: Compile and render 17 frames
+        run: |
+          python -m py_compile scripts/plot_901_diamond_path.py
+          python -u scripts/plot_901_diamond_path.py --frames-up 9 --frames-corner 9 --output-dir results/diamond_path_901
+      - name: Upload individual images and contact sheet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gerit-901-diamond-path-17-frames
+          path: results/diamond_path_901/
+          if-no-files-found: warn
+          retention-days: 21
