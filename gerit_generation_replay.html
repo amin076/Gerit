@@ -38,8 +38,8 @@ function draw(){
  if(!data)return;
  index=Math.max(0,Math.min(index,data.frames.length-1));
  const fr=data.frames[index], L=fr.side, pad=22,unit=(canvas.width-2*pad)/L;
- ctx.fillStyle='#101d30';ctx.fillRect(0,0,canvas.width,canvas.height);
- ctx.strokeStyle='#ffca70';ctx.lineWidth=4;
+ ctx.fillStyle=fr.valid===false?'#261a24':'#101d30';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.strokeStyle=fr.valid===false?'#ff708b':'#ffca70';ctx.lineWidth=4;
  ctx.strokeRect(pad,pad,L*unit,L*unit);
  for(let i=0;i<fr.squares.length;i++){
   const q=fr.squares[i],a=(q.angle_deg||0)*Math.PI/180;
@@ -56,10 +56,15 @@ function draw(){
  }
  $('seek').value=index;
  $('counter').textContent=index+' / '+(data.frames.length-1);
- $('status').textContent='نسل: '+fr.generation+'\nتعداد مربع‌ها: '+fr.n+
- '\nطول ضلع: '+fr.side.toFixed(10)+'\n'+fr.note+
- '\nمبنای آزمایش: '+data.baseline_side.toFixed(10)+
- '\nتوجه: این نسخه آزمایش مستقل هندسی است، نه اجرای موتور تکاملی اصلی.';
+ $('status').textContent='نسل: '+fr.generation+'\\nتعداد مربع‌ها: '+fr.n+
+ '\\nطول ضلع هدف این نسل: '+fr.side.toFixed(10)+'\\n'+fr.note+
+ '\\nمبنای آزمایش: '+data.baseline_side.toFixed(10)+
+ '\\nوضعیت نامزد: '+(fr.valid===false?'نامعتبر / در حال اصلاح':'معتبر یا نامشخص')+
+ '\\nتعداد برخوردها: '+(fr.near_collisions??'نامشخص')+
+ '\\nتعداد مربع‌های بیرون مرز: '+(fr.near_outside??'نامشخص')+
+ '\\nبهترین ضلع معتبر تا این نسل: '+(fr.best_side??data.best_side??fr.side)+
+ '\\nمنبع: '+(data.source||'آزمایش مستقل')+
+ '\\nتوجه: فریم نامعتبر، جواب مسابقه نیست.';
 }
 function step(){if(!data)return;index++;if(index>=data.frames.length){stop();return;}draw();timer=setTimeout(step,Math.max(50,Number($('delay').value)||500));}
 $('upload').onchange=async e=>{
