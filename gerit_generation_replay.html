@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gerit — Generation Replay</title>
+<style>
+:root{font-family:Tahoma,Arial,sans-serif;color:#e4eaf7;background:#0e1626}
+body{margin:0;padding:18px}.wrap{max-width:1150px;margin:auto}
+.controls{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:12px 0}
+button,input{border:1px solid #4c5c78;background:#1d2e49;color:white;border-radius:7px;padding:8px}
+button{cursor:pointer}button:hover{background:#355479}
+canvas{display:block;width:min(96vw,820px);height:auto;aspect-ratio:1;background:#111c2d;border:1px solid #52647e;border-radius:8px}
+#status{line-height:1.8;white-space:pre-wrap;color:#b8d0ee}
+input[type=range]{width:min(70vw,420px)}
+</style>
+</head>
+<body><div class="wrap">
+<h2>بازپخش نسل‌به‌نسل چیدمان مربع‌ها — Gerit</h2>
+<p>فایل <code>history.json</code> خروجی آزمایش را انتخاب کنید. هر فریم بهترین چیدمانِ کاملِ یافت‌شده تا آن نسل است، نه الزاماً بهترین فرزند همان نسل.</p>
+<div class="controls">
+<input id="upload" type="file" accept=".json,application/json">
+<button id="start">▶ پخش</button><button id="pause">⏸ توقف</button>
+<button id="prev">نسل قبل</button><button id="next">نسل بعد</button>
+<label>تأخیر <input id="delay" type="number" value="500" min="50" max="10000" step="50" style="width:65px"> میلی‌ثانیه</label>
+</div>
+<div class="controls"><label>نسل <input id="seek" type="range" value="0" min="0" max="0" step="1"></label><span id="counter">0 / 0</span></div>
+<canvas id="canvas" width="1000" height="1000"></canvas>
+<pre id="status">برای شروع فایل history.json را انتخاب کنید.</pre>
+</div>
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas=$('canvas'),ctx=canvas.getContext('2d');
+let data=null,index=0,timer=null;
+function stop(){if(timer!==null){clearTimeout(timer);timer=null;}}
+function draw(){
+ if(!data)return;
+ index=Math.max(0,Math.min(index,data.frames.length-1));
+ const fr=data.frames[index], L=fr.side, pad=22,unit=(canvas.width-2*pad)/L;
+ ctx.fillStyle='#101d30';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.strokeStyle='#ffca70';ctx.lineWidth=4;
+ ctx.strokeRect(pad,pad,L*unit,L*unit);
+ for(let i=0;i<fr.squares.length;i++){
+  const q=fr.squares[i],a=(q.angle_deg||0)*Math.PI/180;
+  const c=Math.cos(a),s=Math.sin(a),p=[[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]];
+  ctx.beginPath();
+  for(let j=0;j<4;j++){
+   const [dx,dy]=p[j],x=q.x+dx*c-dy*s,y=q.y+dx*s+dy*c;
+   const px=pad+x*unit,py=canvas.height-pad-y*unit;
+   if(j===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.fillStyle=Math.abs(s)>1e-6?'#f1ac59':'#75a8d3';
+  ctx.fill();ctx.strokeStyle='#263952';ctx.lineWidth=1;ctx.stroke();
+ }
+ $('seek').value=index;
+ $('counter').textContent=index+' / '+(data.frames.length-1);
+ $('status').textContent='نسل: '+fr.generation+'\nتعداد مربع‌ها: '+fr.n+
+ '\nطول ضلع: '+fr.side.toFixed(10)+'\n'+fr.note+
+ '\nمبنای آزمایش: '+data.baseline_side.toFixed(10)+
+ '\nتوجه: این نسخه آزمایش مستقل هندسی است، نه اجرای موتور تکاملی اصلی.';
+}
+function step(){if(!data)return;index++;if(index>=data.frames.length){stop();return;}draw();timer=setTimeout(step,Math.max(50,Number($('delay').value)||500));}
+$('upload').onchange=async e=>{
+ stop();
+ try{
+  const f=e.target.files[0];if(!f)return;
+  const obj=JSON.parse(await f.text());
+  if(!Array.isArray(obj.frames)||obj.frames.length===0)throw Error('فایل تاریخچه معتبر نیست');
+  data=obj;index=0;$('seek').max=data.frames.length-1;
+  $('delay').value=data.frame_delay_ms||500;draw();
+ }catch(err){$('status').textContent='خطا در خواندن فایل: '+err.message;}
+};
+$('start').onclick=()=>{if(!data)return;stop();if(index===data.frames.length-1)index=0;draw();timer=setTimeout(step,Math.max(50,Number($('delay').value)||500));};
+$('pause').onclick=stop;
+$('prev').onclick=()=>{stop();index--;draw();};
+$('next').onclick=()=>{stop();index++;draw();};
+$('seek').oninput=e=>{stop();index=Number(e.target.value);draw();};
+})();
+</script></body></html>
