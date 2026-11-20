@@ -126,7 +126,7 @@ def _ranking(d):
 
 def optimize(*,registry,n=230,generations=900,iterations=160,
              seed=2300,log_every=10,output_dir,apply=False,
-             resume_dir=None,shrink_max=.035,candidate_file=None,near_seed_file=None):
+             resume_dir=None,shrink_max=.035,candidate_file=None,near_seed_file=None,visual_history=False):
     if not 2<=n<=1000 or generations<1 or iterations<1 or log_every<1:
         raise ValueError("Invalid N or budgets")
     if not 0<shrink_max<=.2:
@@ -231,6 +231,18 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
                   f"new_L={best.container_side:.12f}",flush=True)
     nearest_changes=0
     history=[]
+    # Visual history records the ACTUAL relaxation candidate at every generation.
+    # Candidate frames may overlap or exceed the cap: they are NOT certified.
+    visual_frames=[]
+    if visual_history:
+        visual_frames.append({
+            "generation":0,"n":n,"side":best.container_side,
+            "best_side":best.container_side,"valid":True,
+            "near_collisions":0,"near_outside":0,
+            "note":"Initial certified registry/seed parent",
+            "squares":[{"x":sq.x,"y":sq.y,"angle_deg":math.degrees(sq.angle)}
+                       for sq in best.squares]
+        })
     # Keep several valid historical elites for exploration rather than
     # relying only on the current incumbent.
     elites=[best]
@@ -305,6 +317,32 @@ def optimize(*,registry,n=230,generations=900,iterations=160,
                         updates+=1
         if not is_better:
             no_progress+=1
+        if visual_history:
+            # Show the relaxed, generally NONVALID candidate rather than the
+            # unchanging global best. Explicitly include diagnostics.
+            visual_frames.append({
+                "generation":generation,"n":n,"side":float(cap),
+                "best_side":float(best.container_side),
+                "valid":bool(candidate is not None and
+                             validate_packing(candidate,tolerance=0.).valid and
+                             len(candidate.squares)==n and
+                             candidate.container_side<=cap+1e-8),
+                "near_collisions":int(diag["overlap_pairs"]),
+                "near_outside":int(diag["outside_squares"]),
+                "note":("CERTIFIED improvement" if is_better
+                        else "Actual relaxed candidate; may be infeasible"),
+                "squares":[{"x":float(row[0]),"y":float(row[1]),
+                            "angle_deg":float(math.degrees(row[2]))}
+                           for row in solution]
+            })
+            if generation%log_every==0 or generation==generations:
+                _write_json(output/"history.json",{
+                    "source":"gerit.elastic_deep_fixed_n",
+                    "target_n":n,"generations":generations,
+                    "frame_delay_ms":500,"baseline_side":archive.container_side,
+                    "best_side":best.container_side,"frames":visual_frames,
+                    "warning":"Candidate frames are real optimization states, NOT necessarily valid. Only certified improvements may be submitted."
+                })
         if generation%log_every==0 or generation==generations:
             expected_score=start_score+(best.container_side-archive.container_side)/math.sqrt(n)
             if apply:
@@ -354,6 +392,7 @@ def main():
     p.add_argument("--resume-dir")
     p.add_argument("--candidate-file",help="Independently validated fixed-N starting packing from prior growth")
     p.add_argument("--near-seed-file",help="N-1 -> N growth .npz poses for near-feasible warm start; must include source_n and target_n")
+    p.add_argument("--visual-history",action="store_true",help="Save per-generation real relaxed geometry for HTML playback (history.json); intermediate frames may be invalid")
     p.add_argument("--apply",action="store_true")
     args=p.parse_args()
     optimize(registry=args.registry,n=args.n,
@@ -361,7 +400,8 @@ def main():
              seed=args.seed,log_every=args.log_every,
              output_dir=args.output_dir,apply=args.apply,
              resume_dir=args.resume_dir,shrink_max=args.shrink_max,
-             candidate_file=args.candidate_file)
+             candidate_file=args.candidate_file,near_seed_file=args.near_seed_file,
+             visual_history=args.visual_history)
 
 
 if __name__=="__main__":
