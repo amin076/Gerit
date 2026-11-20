@@ -391,6 +391,7 @@ def main():
     p.add_argument("--output-dir",default="results/kaggle_deep/n230_g900_s2300")
     p.add_argument("--resume-dir")
     p.add_argument("--candidate-file",help="Independently validated fixed-N starting packing from prior growth")
+    p.add_argument("--near-seed-file",help="Optional N-1 growth near-seed NPZ for candidate repair")
     p.add_argument("--near-seed-file",help="N-1 -> N growth .npz poses for near-feasible warm start; must include source_n and target_n")
     p.add_argument("--visual-history",action="store_true",help="Save per-generation real relaxed geometry for HTML playback (history.json); intermediate frames may be invalid")
     p.add_argument("--apply",action="store_true")
